@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:newsledger:story.published:v1",
+  "allOf": [
+    { "$ref": "envelope.v1.schema.json" },
+    {
+      "properties": {
+        "type": { "const": "story.published.v1" },
+        "data": {
+          "type": "object",
+          "required": ["story_id", "story_version_id", "publication_scope"],
+          "properties": {
+            "story_id": { "type": "string" },
+            "story_version_id": { "type": "string" },
+            "publication_scope": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

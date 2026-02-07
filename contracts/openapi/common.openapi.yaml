@@ -1,0 +1,38 @@
+openapi: 3.0.3
+info:
+  title: Common Types
+  version: "1.0.0"
+
+components:
+  schemas:
+    Ulid:
+      type: string
+      description: ULID string
+      pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+
+    IsoTime:
+      type: string
+      format: date-time
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+
+    ActorRef:
+      type: object
+      required: [actor_id]
+      properties:
+        actor_id: { $ref: "#/components/schemas/Ulid" }
+
+    EvidenceRef:
+      type: object
+      required: [evidence_id_hash]
+      properties:
+        evidence_id_hash:
+          type: string
+          description: content hash, e.g. sha256:...
+          minLength: 16

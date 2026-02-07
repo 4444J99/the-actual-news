@@ -1,0 +1,103 @@
+openapi: 3.0.3
+info:
+  title: Evidence Service
+  version: "1.0.0"
+servers:
+  - url: ${EVIDENCE_BASE_URI}
+paths:
+  /v1/health:
+    get:
+      operationId: evidenceHealth
+      responses: { "200": { description: ok } }
+
+  /v1/evidence/presign:
+    post:
+      operationId: presignUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PresignRequest" }
+      responses:
+        "200":
+          description: presigned upload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PresignResponse" }
+
+  /v1/evidence:
+    post:
+      operationId: registerEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterEvidenceRequest" }
+      responses:
+        "201":
+          description: registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvidenceObject" }
+
+  /v1/evidence/{evidence_id_hash}:
+    get:
+      operationId: getEvidence
+      parameters:
+        - in: path
+          name: evidence_id_hash
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: evidence
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvidenceObject" }
+
+components:
+  schemas:
+    PresignRequest:
+      type: object
+      required: [platform_id, media_type, filename]
+      properties:
+        platform_id: { type: string }
+        media_type: { type: string }
+        filename: { type: string }
+        content_sha256: { type: string }
+
+    PresignResponse:
+      type: object
+      required: [upload_url, blob_uri]
+      properties:
+        upload_url: { type: string }
+        blob_uri: { type: string }
+
+    RegisterEvidenceRequest:
+      type: object
+      required: [platform_id, blob_uri, media_type, provenance]
+      properties:
+        platform_id: { type: string }
+        blob_uri: { type: string }
+        media_type: { type: string }
+        extracted_text: { type: string }
+        provenance:
+          type: object
+          required: [source, collected_at]
+          properties:
+            source: { type: string }
+            chain: { type: array, items: { type: string } }
+            collected_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+            license: { type: string }
+
+    EvidenceObject:
+      type: object
+      required: [evidence_id_hash, platform_id, blob_uri, media_type, created_at]
+      properties:
+        evidence_id_hash: { type: string }
+        platform_id: { type: string }
+        blob_uri: { type: string }
+        media_type: { type: string }
+        extracted_text: { type: string }
+        provenance: { type: object, additionalProperties: true }
+        created_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }

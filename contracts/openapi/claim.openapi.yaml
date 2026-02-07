@@ -1,0 +1,92 @@
+openapi: 3.0.3
+info:
+  title: Claim Service
+  version: "1.0.0"
+servers:
+  - url: ${CLAIM_BASE_URI}
+paths:
+  /v1/health:
+    get:
+      operationId: claimHealth
+      responses: { "200": { description: ok } }
+
+  /v1/extract:
+    post:
+      operationId: extractClaims
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtractClaimsRequest" }
+      responses:
+        "202":
+          description: accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+
+  /v1/stories/{story_id}/claims:
+    get:
+      operationId: listClaimsForStory
+      parameters:
+        - in: path
+          name: story_id
+          required: true
+          schema: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+      responses:
+        "200":
+          description: claims
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Claim" }
+
+components:
+  schemas:
+    ExtractClaimsRequest:
+      type: object
+      required: [platform_id, story_id, story_version_id, body_markdown, model_policy]
+      properties:
+        platform_id: { type: string }
+        story_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        story_version_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        body_markdown: { type: string }
+        model_policy:
+          type: object
+          required: [model_gateway_uri]
+          properties:
+            model_gateway_uri: { type: string }
+            max_claims: { type: integer, default: 200 }
+            allow_interpretation_claims: { type: boolean, default: false }
+
+    Claim:
+      type: object
+      required: [claim_id, story_id, story_version_id, claim_type, text, support_status, created_at]
+      properties:
+        claim_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        story_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        story_version_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        claim_type: { type: string, enum: [factual, statistical, attribution, interpretation] }
+        text: { type: string }
+        entities:
+          type: array
+          items: { type: string }
+        time_window:
+          type: object
+          properties:
+            start: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+            end: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+        jurisdiction: { type: string }
+        support_status: { type: string, enum: [unsupported, partially_supported, supported, contradicted] }
+        confidence_model: { type: number, minimum: 0, maximum: 1 }
+        confidence_review: { type: number, minimum: 0, maximum: 1 }
+        created_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }

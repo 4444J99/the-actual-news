@@ -1,0 +1,21 @@
+{
+  "policy_pack_version": "v1.0.0",
+  "publish_gates": {
+    "min_primary_evidence_ratio": 0.50,
+    "max_unsupported_claim_share": 0.10,
+    "max_contradicted_claims": 0,
+    "require_high_impact_corroboration": true,
+    "high_impact_min_independent_sources": 2
+  },
+  "evidence": {
+    "primary_source_classes": ["primary_record", "primary_media", "primary_dataset"],
+    "independence_key_fields": ["source", "publisher", "url", "blob_uri"]
+  },
+  "claim": {
+    "high_impact_claim_types": ["statistical"],
+    "high_impact_regexes": [
+      "(accus|illegal|fraud|crime|charged|indict|lawsuit|killed|injur|shoot|arrest|explos|terror|abuse)",
+      "(\\$|usd|million|billion|percent|%)"
+    ]
+  }
+}

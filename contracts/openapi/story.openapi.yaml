@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: Story Service
+  version: "1.0.0"
+servers:
+  - url: ${STORY_BASE_URI}
+paths:
+  /v1/health:
+    get:
+      operationId: storyHealth
+      responses:
+        "200":
+          description: ok
+
+  /v1/stories:
+    post:
+      operationId: createStory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStoryRequest"
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Story" }
+        "400":
+          description: error
+          content:
+            application/json:
+              schema: { $ref: "common.openapi.yaml#/components/schemas/Error" }
+
+    get:
+      operationId: listStories
+      parameters:
+        - in: query
+          name: state
+          schema: { type: string, enum: [draft, review, published] }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Story" }
+
+  /v1/stories/{story_id}:
+    get:
+      operationId: getStory
+      parameters:
+        - in: path
+          name: story_id
+          required: true
+          schema: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+      responses:
+        "200":
+          description: story
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryWithVersions" }
+        "404":
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: "common.openapi.yaml#/components/schemas/Error" }
+
+  /v1/stories/{story_id}/versions:
+    post:
+      operationId: createStoryVersion
+      parameters:
+        - in: path
+          name: story_id
+          required: true
+          schema: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateVersionRequest" }
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StoryVersion" }
+
+  /v1/stories/{story_id}/publish:
+    post:
+      operationId: publishStory
+      parameters:
+        - in: path
+          name: story_id
+          required: true
+          schema: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublishStoryRequest" }
+      responses:
+        "202":
+          description: accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publish_job_id]
+                properties:
+                  publish_job_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+
+components:
+  schemas:
+    Story:
+      type: object
+      required: [story_id, platform_id, title, state, created_at]
+      properties:
+        story_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        platform_id: { type: string }
+        title: { type: string }
+        state: { type: string, enum: [draft, review, published] }
+        created_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+        updated_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+
+    StoryVersion:
+      type: object
+      required: [story_version_id, story_id, body_markdown, created_at]
+      properties:
+        story_version_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        story_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        body_markdown: { type: string }
+        disclosure_markdown: { type: string }
+        created_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+
+    StoryWithVersions:
+      allOf:
+        - $ref: "#/components/schemas/Story"
+        - type: object
+          required: [versions]
+          properties:
+            versions:
+              type: array
+              items: { $ref: "#/components/schemas/StoryVersion" }
+
+    CreateStoryRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        initial_body_markdown: { type: string }
+
+    CreateVersionRequest:
+      type: object
+      required: [body_markdown]
+      properties:
+        body_markdown: { type: string }
+        disclosure_markdown: { type: string }
+
+    PublishStoryRequest:
+      type: object
+      required: [story_version_id]
+      properties:
+        story_version_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        publication_scope:
+          type: string
+          enum: [local, regional, national, global]

@@ -1,0 +1,91 @@
+openapi: 3.0.3
+info:
+  title: Verification Service
+  version: "1.0.0"
+servers:
+  - url: ${VERIFY_BASE_URI}
+paths:
+  /v1/health:
+    get:
+      operationId: verifyHealth
+      responses: { "200": { description: ok } }
+
+  /v1/tasks:
+    get:
+      operationId: listVerificationTasks
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [open, in_progress, resolved] }
+      responses:
+        "200":
+          description: tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/VerificationTask" }
+
+  /v1/tasks/{task_id}/review:
+    post:
+      operationId: submitReview
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitReviewRequest" }
+      responses:
+        "201":
+          description: recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Review" }
+
+components:
+  schemas:
+    VerificationTask:
+      type: object
+      required: [task_id, story_id, claim_id, task_type, status, created_at]
+      properties:
+        task_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        story_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        claim_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        task_type: { type: string, enum: [evidence_gap, corroboration, contradiction, coi_check] }
+        status: { type: string, enum: [open, in_progress, resolved] }
+        created_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+
+    SubmitReviewRequest:
+      type: object
+      required: [actor_id, verdict, notes]
+      properties:
+        actor_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        verdict: { type: string, enum: [supports, contradicts, context_only, cannot_determine] }
+        notes: { type: string }
+        evidence_edges:
+          type: array
+          items:
+            type: object
+            required: [evidence_id_hash, relation, strength]
+            properties:
+              evidence_id_hash: { type: string }
+              relation: { type: string, enum: [supports, contradicts, context] }
+              strength: { type: number, minimum: 0, maximum: 1 }
+
+    Review:
+      type: object
+      required: [review_id, task_id, actor_id, verdict, created_at]
+      properties:
+        review_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        task_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        actor_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+        verdict: { type: string }
+        created_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }

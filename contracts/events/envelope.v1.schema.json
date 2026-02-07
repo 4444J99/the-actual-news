@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:newsledger:event-envelope:v1",
+  "type": "object",
+  "required": ["event_id", "platform_id", "type", "time", "specversion", "data"],
+  "properties": {
+    "event_id": { "type": "string", "minLength": 8 },
+    "platform_id": { "type": "string" },
+    "type": { "type": "string" },
+    "time": { "type": "string", "format": "date-time" },
+    "specversion": { "type": "string", "const": "1.0" },
+    "trace_id": { "type": "string" },
+    "actor_id": { "type": "string" },
+    "data": { "type": "object" }
+  },
+  "additionalProperties": false
+}

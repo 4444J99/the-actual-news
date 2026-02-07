@@ -1,0 +1,80 @@
+openapi: 3.0.3
+info:
+  title: Gateway Public API
+  version: "1.0.0"
+servers:
+  - url: ${PUBLIC_API_URI}
+paths:
+  /v1/health:
+    get:
+      operationId: gatewayHealth
+      responses: { "200": { description: ok } }
+
+  /v1/feed:
+    get:
+      operationId: getFeed
+      parameters:
+        - in: query
+          name: scope
+          schema: { type: string, enum: [local, regional, national, global], default: local }
+      responses:
+        "200":
+          description: feed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [story_id, title, state, updated_at]
+                      properties:
+                        story_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+                        title: { type: string }
+                        state: { type: string }
+                        updated_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
+
+  /v1/story/{story_id}:
+    get:
+      operationId: getStoryBundle
+      parameters:
+        - in: path
+          name: story_id
+          required: true
+          schema: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+      responses:
+        "200":
+          description: story bundle for reader view
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [story, claims, evidence_edges, corrections]
+                properties:
+                  story: { $ref: "story.openapi.yaml#/components/schemas/StoryWithVersions" }
+                  claims:
+                    type: array
+                    items: { $ref: "claim.openapi.yaml#/components/schemas/Claim" }
+                  evidence_edges:
+                    type: array
+                    items:
+                      type: object
+                      required: [claim_id, evidence_id_hash, relation, strength]
+                      properties:
+                        claim_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+                        evidence_id_hash: { type: string }
+                        relation: { type: string, enum: [supports, contradicts, context] }
+                        strength: { type: number, minimum: 0, maximum: 1 }
+                  corrections:
+                    type: array
+                    items:
+                      type: object
+                      required: [correction_id, claim_id, reason, created_at]
+                      properties:
+                        correction_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+                        claim_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
+                        reason: { type: string }
+                        created_at: { $ref: "common.openapi.yaml#/components/schemas/IsoTime" }
