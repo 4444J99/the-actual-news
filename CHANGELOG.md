@@ -9,13 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Repository initialization with AGPL-3.0 license
-- OpenAPI contracts for all services
-- Database migrations (001-003)
-- Protocol specification (core-protocol-spec-v1)
-- Conformance test suite (CT-01 through CT-07)
-- Gateway service with feed, story, and publish endpoints
-- Service stubs for story, claim, evidence, and verify
-- Next.js reader and verifier UI skeleton
-- Docker Compose infrastructure with Prism mocks
-- CI pipeline with lint, typecheck, and conformance
+- Platinum Sprint: CI/CD workflow, standardized badge row, ADR documentation
+- Initial CHANGELOG following Keep a Changelog format
+
+## [0.1.0] - 2026-02-11
+
+### Added
+
+- Initial public release as part of the organvm eight-organ system
+- Core project structure and documentation
+- README with portfolio-quality documentation
+
+[Unreleased]: https://github.com/organvm-iii-ergon/the-actual-news/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/organvm-iii-ergon/the-actual-news/releases/tag/v0.1.0
