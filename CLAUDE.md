@@ -1,73 +1,63 @@
 # CLAUDE.md — the-actual-news
 
-**ORGAN III** (Commerce) · `organvm-iii-ergon/the-actual-news`
-**Status:** ACTIVE · **Branch:** `main`
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What This Repo Is
+## What This Is
 
-Verifiable news ledger platform — news as a public service
+**The Actual News** — verifiable news ledger platform treating news as a public service. A pnpm monorepo with an OpenAPI-defined gateway, microservices for claims/evidence/stories/verification, and a PostgreSQL-backed audit trail. Deployed as a Next.js static export on Cloudflare Pages.
 
-## Stack
-
-**Languages:** TypeScript, PLpgSQL, JavaScript
-**Build:** pnpm, Make
-
-## Directory Structure
-
-```
-📁 .config/
-📁 .github/
-📁 apps/
-    public-web
-📁 contracts/
-📁 db/
-📁 docs/
-    adr
-    architecture.md
-    design
-    glossary.md
-    local-development.md
-    roadmap.md
-📁 infra/
-📁 memory/
-📁 services/
-📁 specs/
-📁 tools/
-  .editorconfig
-  .env.example
-  .gitignore
-  CHANGELOG.md
-  LICENSE
-  Makefile
-  News-as-Public-Service.md
-  README.md
-  package.json
-  pnpm-workspace.yaml
-  seed.yaml
-```
-
-## Key Files
-
-- `README.md` — Project documentation
-- `package.json` — Dependencies and scripts
-- `seed.yaml` — ORGANVM orchestration metadata
-
-## Development
+## Commands
 
 ```bash
-pnpm install    # Install dependencies
-pnpm build      # Build all packages
-pnpm test       # Run tests
-pnpm dev        # Start development server
+# Development
+make dev             # Run all services in parallel (pnpm -r --parallel dev)
+make dev-minimal     # Gateway only (cd services/gateway && pnpm dev)
+
+# Infrastructure
+make up              # docker-compose -f infra/docker-compose.yml up -d (PostgreSQL)
+make down            # Tear down + remove volumes
+make migrate         # Run migrations via tools/migrate.sh
+
+# Quality
+make lint            # Lint OpenAPI contracts (npx @redocly/cli lint contracts/openapi/*.yaml)
+make test            # Run conformance tests (node tools/conformance/run.mjs)
+make reset           # down + up + migrate
+
+# Individual service
+cd services/<name> && pnpm dev
 ```
 
-## ORGANVM Context
+## Architecture
 
-This repository is part of the **ORGANVM** eight-organ creative-institutional system.
-It belongs to **ORGAN III (Commerce)** under the `organvm-iii-ergon` GitHub organization.
+**Monorepo layout**:
+```
+services/
+├── gateway/      # API gateway — routes all external traffic
+├── claim/        # Claim submission and tracking service
+├── evidence/     # Evidence attachment service
+├── story/        # Story composition service
+├── verify/       # Verification and audit service
+apps/
+└── public-web/   # Next.js 16 frontend (static export)
+db/               # PostgreSQL migrations
+contracts/
+└── openapi/      # OpenAPI specs (source of truth — lint with Redocly)
+infra/            # Docker Compose, infrastructure config
+tools/
+└── conformance/  # Conformance test runner
+```
 
-**Registry:** [`registry-v2.json`](https://github.com/meta-organvm/organvm-corpvs-testamentvm/blob/main/registry-v2.json)
-**Corpus:** [`organvm-corpvs-testamentvm`](https://github.com/meta-organvm/organvm-corpvs-testamentvm)
+**Contract-first**: `contracts/openapi/*.yaml` are the canonical API definitions. Run `make lint` after editing them.
+
+**Database**: PostgreSQL via Docker Compose locally. `POSTGRES_URI` env var required for migrations.
+
+**Frontend** (`apps/public-web`): Next.js 16 with static export (`output: 'export'`). Deployed to Cloudflare Pages.
+
+**Environment**: Set `PLATFORM_ID` and `POSTGRES_URI` before running make targets that need them.
+
+## Deployment
+
+Live at **https://the-actual-news.pages.dev** (Cloudflare Pages). Next.js static export; React aligned to v19 for CF Pages compatibility.
 
 <!-- ORGANVM:AUTO:START -->
 ## System Context (auto-generated — do not edit)
