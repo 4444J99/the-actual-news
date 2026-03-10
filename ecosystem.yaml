@@ -1,0 +1,11 @@
+schema_version: '1.0'
+repo: the-actual-news
+organ: III
+display_name: "Verifiable news ledger platform \u2014 news as a public service"
+delivery:
+- platform: web_app
+  status: not_started
+revenue:
+- platform: subscription
+  status: planned
+  priority: critical
