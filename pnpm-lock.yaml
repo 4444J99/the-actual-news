@@ -220,12 +220,6 @@ importers:
         specifier: ^8.19.0
         version: 8.19.0
 
-  tools/conformance:
-    dependencies:
-      pg:
-        specifier: ^8.12.0
-        version: 8.19.0
-
 packages:
 
   '@ast-grep/napi-darwin-arm64@0.40.5':
@@ -7618,3 +7612,4 @@ snapshots:
       zod: 4.4.3
 
   zod@4.4.3: {}
+
