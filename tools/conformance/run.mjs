@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -12,7 +13,9 @@ if (!POSTGRES_URI) {
   process.exit(2);
 }
 
-const ROOT = process.cwd();
+// Resolve from this file so `pnpm -r test` (cwd = tools/conformance) and
+// `node tools/conformance/run.mjs` (cwd = repo root) both work.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const FIXTURES_DIR = path.join(ROOT, "tools", "conformance", "fixtures");
 const SQL_DIR = path.join(ROOT, "tools", "conformance", "sql");
 const SCHEMA_SQL = fs.readFileSync(path.join(SQL_DIR, "schema.sql"), "utf8");
