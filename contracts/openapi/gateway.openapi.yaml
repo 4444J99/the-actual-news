@@ -94,6 +94,7 @@ paths:
 
   /v1/story/{story_id}/transparency:
     get:
+      summary: Get the transparency record for a story
       operationId: getStoryTransparency
       parameters:
         - in: path
@@ -138,6 +139,7 @@ paths:
 
   /v1/transparency/checkpoints:
     post:
+      summary: Create a transparency log checkpoint
       operationId: createTransparencyCheckpoint
       requestBody:
         required: false
@@ -155,6 +157,7 @@ paths:
 
   /v1/transparency/checkpoints/{checkpoint_id}:
     get:
+      summary: Get a transparency log checkpoint by ID
       operationId: getTransparencyCheckpoint
       parameters:
         - in: path
