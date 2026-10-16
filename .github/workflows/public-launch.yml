@@ -10,7 +10,7 @@ on:
 jobs:
   quality:
     name: Lint, contracts, typecheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -40,7 +40,7 @@ jobs:
 
   public-web:
     name: Public web artifact
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -92,7 +92,7 @@ jobs:
 
   conformance:
     name: Service and ledger conformance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -138,7 +138,7 @@ jobs:
 
   containers:
     name: Optional container boundary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
