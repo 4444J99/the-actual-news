@@ -3,13 +3,6 @@ updates:
   - package-ecosystem: "npm"
     directories:
       - "/"
-      - "/apps/public-web"
-      - "/services/claim"
-      - "/services/evidence"
-      - "/services/gateway"
-      - "/services/story"
-      - "/services/verify"
-      - "/tools/conformance"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
