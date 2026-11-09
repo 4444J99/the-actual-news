@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   postgres:
     image: postgres:16
@@ -9,10 +11,10 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ../db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U news -d news_ledger"]
-      interval: 30s
+      interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
@@ -28,6 +30,7 @@ services:
       - ../.env.internal.example
     environment:
       POSTGRES_URI: postgres://news:${POSTGRES_PASSWORD:-news}@postgres:5432/news_ledger?sslmode=disable
+      POLICY_PACK_PATH: /app/contracts/policy-packs/v1.0.0.json
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
     depends_on:
@@ -35,10 +38,9 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8080/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
-      interval: 30s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
     restart: unless-stopped
 
   story:
@@ -50,14 +52,18 @@ services:
         SERVICE_NAME: story-service
     env_file:
       - ../.env.internal.example
+    environment:
+      POSTGRES_URI: postgres://news:${POSTGRES_PASSWORD:-news}@postgres:5432/news_ledger?sslmode=disable
     ports:
       - "127.0.0.1:${STORY_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8081/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
-      interval: 30s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
     restart: unless-stopped
 
   claim:
@@ -69,14 +75,18 @@ services:
         SERVICE_NAME: claim-service
     env_file:
       - ../.env.internal.example
+    environment:
+      POSTGRES_URI: postgres://news:${POSTGRES_PASSWORD:-news}@postgres:5432/news_ledger?sslmode=disable
     ports:
       - "127.0.0.1:${CLAIM_PORT:-8082}:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8082/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
-      interval: 30s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
     restart: unless-stopped
 
   evidence:
@@ -88,14 +98,21 @@ services:
         SERVICE_NAME: evidence-service
     env_file:
       - ../.env.internal.example
+    environment:
+      POSTGRES_URI: postgres://news:${POSTGRES_PASSWORD:-news}@postgres:5432/news_ledger?sslmode=disable
+      EVIDENCE_BLOB_STORE_DIR: /data/evidence-blobs
     ports:
       - "127.0.0.1:${EVIDENCE_PORT:-8083}:8083"
+    volumes:
+      - evidence-blobs:/data/evidence-blobs
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8083/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
-      interval: 30s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
     restart: unless-stopped
 
   verify:
@@ -107,15 +124,43 @@ services:
         SERVICE_NAME: verify-service
     env_file:
       - ../.env.internal.example
+    environment:
+      POSTGRES_URI: postgres://news:${POSTGRES_PASSWORD:-news}@postgres:5432/news_ledger?sslmode=disable
     ports:
       - "127.0.0.1:${VERIFY_PORT:-8084}:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8084/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
-      interval: 30s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+  ingestion:
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_DIR: ingestion
+        SERVICE_NAME: ingestion-service
+    env_file:
+      - ../.env.internal.example
+    environment:
+      POSTGRES_URI: postgres://news:${POSTGRES_PASSWORD:-news}@postgres:5432/news_ledger?sslmode=disable
+    ports:
+      - "127.0.0.1:${INGESTION_PORT:-8085}:8085"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8085/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:
   postgres-data:
+  evidence-blobs:

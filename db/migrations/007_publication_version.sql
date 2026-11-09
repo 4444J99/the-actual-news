@@ -1,0 +1,5 @@
+BEGIN;
+
+ALTER TABLE stories ADD COLUMN IF NOT EXISTS published_version_id TEXT;
+
+COMMIT;
