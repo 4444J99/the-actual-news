@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { Pool } from "pg";
 import { fetchFeed, contentHash } from "./fetcher.js";
 
@@ -91,9 +93,15 @@ export async function runIngestion(pool: Pool, platformId: string): Promise<Inge
 
           result.articles_new++;
 
+          // Persist captured bytes to the shared blob store (content-addressed)
+          const blobStoreDir = process.env.EVIDENCE_BLOB_STORE_DIR ?? "/Volumes/Archive4T/Runtime/development/tmp/evidence-blobs";
+          if (!fs.existsSync(blobStoreDir)) fs.mkdirSync(blobStoreDir, { recursive: true });
+          const blobPath = path.join(blobStoreDir, hash.replace("sha256:", "") + ".blob");
+          fs.writeFileSync(blobPath, Buffer.from(article.content || article.title, "utf8"));
+
           // Register capture
           const captureId = ulid();
-          const blobUri = `blob://ingested/${source.source_id}/${captureId}`;
+          const blobUri = `blob://local/${hash}`;
           await pool.query(
             `INSERT INTO source_captures (capture_id, source_id, platform_id, url, content_hash, blob_uri, status, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, 'success', now())`,

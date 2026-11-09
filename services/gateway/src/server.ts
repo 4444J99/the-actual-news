@@ -1417,6 +1417,16 @@ app.get("/v1/archive/export", async (req, res) => {
     const actors = await pool.query(`SELECT * FROM actors WHERE platform_id = $1`, [env.PLATFORM_ID]);
     const tasks = await pool.query(`SELECT vt.* FROM verification_tasks vt JOIN stories s ON s.story_id = vt.story_id WHERE s.platform_id = $1`, [env.PLATFORM_ID]);
     const reviews = await pool.query(`SELECT r.* FROM reviews r JOIN verification_tasks vt ON vt.task_id = r.task_id JOIN stories s ON s.story_id = vt.story_id WHERE s.platform_id = $1`, [env.PLATFORM_ID]);
+    const coi = await pool.query(`SELECT * FROM coi_disclosures WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const federationPeers = await pool.query(`SELECT * FROM federation_peers WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const stewardship = await pool.query(`SELECT * FROM stewardship_transfers WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const platforms = await pool.query(`SELECT * FROM platforms WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const governance = await pool.query(`SELECT * FROM governance_changes WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const memberships = await pool.query(`SELECT * FROM memberships WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const bounties = await pool.query(`SELECT * FROM bounties WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const bountyContribs = await pool.query(`SELECT bc.* FROM bounty_contributions bc JOIN bounties b ON b.bounty_id = bc.bounty_id WHERE b.platform_id = $1`, [env.PLATFORM_ID]);
+    const payouts = await pool.query(`SELECT * FROM payouts WHERE platform_id = $1`, [env.PLATFORM_ID]);
+    const auditLog = await pool.query(`SELECT * FROM audit_log WHERE platform_id = $1`, [env.PLATFORM_ID]);
 
     const archive = {
       platform_id: env.PLATFORM_ID,
@@ -1438,6 +1448,16 @@ app.get("/v1/archive/export", async (req, res) => {
         actors: actors.rows,
         verification_tasks: tasks.rows,
         reviews: reviews.rows,
+        coi_disclosures: coi.rows,
+        federation_peers: federationPeers.rows,
+        stewardship_transfers: stewardship.rows,
+        platforms: platforms.rows,
+        governance_changes: governance.rows,
+        memberships: memberships.rows,
+        bounties: bounties.rows,
+        bounty_contributions: bountyContribs.rows,
+        payouts: payouts.rows,
+        audit_log: auditLog.rows,
       },
     };
 
@@ -1625,6 +1645,106 @@ app.post("/v1/archive/import", async (req, res) => {
       counts.ingest_runs = data.ingest_runs.length;
     }
 
+    if (data.coi_disclosures) {
+      for (const row of data.coi_disclosures) {
+        await client.query(
+          `INSERT INTO coi_disclosures (disclosure_id, platform_id, actor_id, statement, valid_from, valid_to, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (disclosure_id) DO NOTHING`,
+          [row.disclosure_id, targetPlatform, row.actor_id, row.statement, row.valid_from, row.valid_to, row.created_at]
+        );
+      }
+      counts.coi_disclosures = data.coi_disclosures.length;
+    }
+
+    if (data.federation_peers) {
+      for (const row of data.federation_peers) {
+        await client.query(
+          `INSERT INTO federation_peers (peer_id, platform_id, peer_url, peer_name, public_key, status, last_synced_at, last_synced_story_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (peer_id) DO NOTHING`,
+          [row.peer_id, targetPlatform, row.peer_url, row.peer_name, row.public_key, row.status, row.last_synced_at, row.last_synced_story_id, row.created_at]
+        );
+      }
+      counts.federation_peers = data.federation_peers.length;
+    }
+
+    if (data.stewardship_transfers) {
+      for (const row of data.stewardship_transfers) {
+        await client.query(
+          `INSERT INTO stewardship_transfers (transfer_id, platform_id, from_actor_id, to_actor_id, status, initiated_at, approved_at, completed_at, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (transfer_id) DO NOTHING`,
+          [row.transfer_id, targetPlatform, row.from_actor_id, row.to_actor_id, row.status, row.initiated_at, row.approved_at, row.completed_at, row.notes]
+        );
+      }
+      counts.stewardship_transfers = data.stewardship_transfers.length;
+    }
+
+    if (data.platforms) {
+      for (const row of data.platforms) {
+        await client.query(
+          `INSERT INTO platforms (platform_id, name, config, policy_pack_version, steward_actor_id, created_at) VALUES ($1, $2, $3::jsonb, $4, $5, $6) ON CONFLICT (platform_id) DO NOTHING`,
+          [row.platform_id, row.name, JSON.stringify(row.config ?? {}), row.policy_pack_version, row.steward_actor_id, row.created_at]
+        );
+      }
+      counts.platforms = data.platforms.length;
+    }
+
+    if (data.governance_changes) {
+      for (const row of data.governance_changes) {
+        await client.query(
+          `INSERT INTO governance_changes (change_id, platform_id, actor_id, change_type, old_value, new_value, reason, created_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8) ON CONFLICT (change_id) DO NOTHING`,
+          [row.change_id, targetPlatform, row.actor_id, row.change_type, JSON.stringify(row.old_value ?? null), JSON.stringify(row.new_value ?? null), row.reason, row.created_at]
+        );
+      }
+      counts.governance_changes = data.governance_changes.length;
+    }
+
+    if (data.memberships) {
+      for (const row of data.memberships) {
+        await client.query(
+          `INSERT INTO memberships (member_id, platform_id, actor_id, tier, status, started_at, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (member_id) DO NOTHING`,
+          [row.member_id, targetPlatform, row.actor_id, row.tier, row.status, row.started_at, row.expires_at, row.created_at]
+        );
+      }
+      counts.memberships = data.memberships.length;
+    }
+
+    if (data.bounties) {
+      for (const row of data.bounties) {
+        await client.query(
+          `INSERT INTO bounties (bounty_id, platform_id, story_id, amount, status, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (bounty_id) DO NOTHING`,
+          [row.bounty_id, targetPlatform, row.story_id, row.amount, row.status, row.created_by, row.created_at]
+        );
+      }
+      counts.bounties = data.bounties.length;
+    }
+
+    if (data.bounty_contributions) {
+      for (const row of data.bounty_contributions) {
+        await client.query(
+          `INSERT INTO bounty_contributions (contribution_id, bounty_id, actor_id, amount, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (contribution_id) DO NOTHING`,
+          [row.contribution_id, row.bounty_id, row.actor_id, row.amount, row.created_at]
+        );
+      }
+      counts.bounty_contributions = data.bounty_contributions.length;
+    }
+
+    if (data.payouts) {
+      for (const row of data.payouts) {
+        await client.query(
+          `INSERT INTO payouts (payout_id, platform_id, story_id, recipient_actor_id, amount, quality_metrics, policy_pack_version, created_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) ON CONFLICT (payout_id) DO NOTHING`,
+          [row.payout_id, targetPlatform, row.story_id, row.recipient_actor_id, row.amount, JSON.stringify(row.quality_metrics ?? {}), row.policy_pack_version, row.created_at]
+        );
+      }
+      counts.payouts = data.payouts.length;
+    }
+
+    if (data.audit_log) {
+      for (const row of data.audit_log) {
+        await client.query(
+          `INSERT INTO audit_log (audit_id, platform_id, actor_id, action_type, resource_type, resource_id, details, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8) ON CONFLICT (audit_id) DO NOTHING`,
+          [row.audit_id, targetPlatform, row.actor_id, row.action_type, row.resource_type, row.resource_id, JSON.stringify(row.details ?? {}), row.created_at]
+        );
+      }
+      counts.audit_log = data.audit_log.length;
+    }
+
     await client.query("COMMIT");
 
     return res.status(200).json({
@@ -1661,14 +1781,34 @@ app.get("/v1/verify/trust", async (req, res) => {
       detail: publishedWithoutEvent.rowCount ? `${publishedWithoutEvent.rowCount} published stories without publish events` : undefined,
     };
 
-    // Check 2: All evidence objects have valid content hashes (sha256: prefix)
-    const badHashes = await pool.query(
-      `SELECT evidence_id_hash FROM evidence_objects WHERE platform_id = $1 AND evidence_id_hash NOT LIKE 'sha256:%'`,
+    // Check 2: All evidence objects have valid content hashes and (for local blobs) matching bytes
+    const evRows = await pool.query(
+      `SELECT evidence_id_hash, blob_uri FROM evidence_objects WHERE platform_id = $1`,
       [env.PLATFORM_ID]
     );
+    let badEvidence = 0;
+    for (const r of evRows.rows) {
+      const hash = String(r.evidence_id_hash);
+      if (!hash.startsWith("sha256:")) { badEvidence++; continue; }
+      const blobUri = String(r.blob_uri ?? "");
+      const m = blobUri.match(/sha256:([a-f0-9]{64})/);
+      if (m) {
+        const fs = await import("node:fs");
+        const path = await import("node:path");
+        const blobPath = path.join("/Volumes/Archive4T/Runtime/development/tmp/evidence-blobs", hash.replace("sha256:", "") + ".blob");
+        try {
+          const buf = fs.readFileSync(blobPath);
+          const crypto = await import("node:crypto");
+          const computed = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
+          if (computed !== hash) badEvidence++;
+        } catch {
+          badEvidence++;
+        }
+      }
+    }
     checks.evidence_hashes_valid = {
-      pass: badHashes.rowCount === 0,
-      detail: badHashes.rowCount ? `${badHashes.rowCount} evidence objects with invalid hash format` : undefined,
+      pass: badEvidence === 0,
+      detail: badEvidence ? `${badEvidence} evidence objects with invalid or missing bytes` : undefined,
     };
 
     // Check 3: All corrections reference existing claims
