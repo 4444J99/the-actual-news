@@ -7,6 +7,14 @@ const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
 const PORT = Number(process.env.VERIFY_PORT ?? DEFAULT_PORT);
 
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY ?? "dev-internal-key"; // allow-secret
+
+function checkAuth(req: any): boolean {
+  const key = req.headers?.["x-api-key"];
+  if (!key) return false;
+  return String(key) === INTERNAL_API_KEY;
+}
+
 type TaskStatus = "open" | "in_progress" | "resolved";
 type TaskType = "evidence_gap" | "corroboration" | "contradiction" | "coi_check";
 type Verdict = "supports" | "contradicts" | "context_only" | "cannot_determine";
@@ -99,6 +107,12 @@ app.post("/v1/tasks", async (req, res) => {
 
 // POST /v1/tasks/:task_id/review — submit a review
 app.post("/v1/tasks/:task_id/review", async (req, res) => {
+  if (!checkAuth(req)) {
+    return res.status(403).json({
+      code: "forbidden",
+      message: "review requires an authenticated internal caller"
+    });
+  }
   const { actor_id, verdict, notes, evidence_edges } = req.body ?? {};
 
   if (!actor_id || !verdict || !notes) {
