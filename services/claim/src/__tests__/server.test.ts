@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import http from "node:http";
-import { app, claims, jobs } from "../server.js";
+import { app, pool } from "../server.js";
 
 let server: http.Server;
 let baseUrl: string;
@@ -25,8 +25,15 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
-  claims.clear();
-  jobs.clear();
+  await pool.query("DELETE FROM claim_evidence_edges");
+  await pool.query("DELETE FROM claims");
+  await pool.query("DELETE FROM story_versions");
+  await pool.query("DELETE FROM stories");
+  await pool.query("INSERT INTO stories (story_id, platform_id, title, state, created_at, updated_at) VALUES ('STORY1','plf_local_01','Test Story','draft',now(),now()) ON CONFLICT (story_id) DO NOTHING");
+  await pool.query("INSERT INTO story_versions (story_version_id, story_id, body_markdown, created_at) VALUES ('SV1','STORY1','body',now()) ON CONFLICT (story_version_id) DO NOTHING");
+  await pool.query("INSERT INTO stories (story_id, platform_id, title, state, created_at, updated_at) VALUES ('S001','plf_local_01','Test Story','draft',now(),now()) ON CONFLICT (story_id) DO NOTHING");
+  await pool.query("INSERT INTO story_versions (story_version_id, story_id, body_markdown, created_at) VALUES ('SV001','S001','body',now()) ON CONFLICT (story_version_id) DO NOTHING");
+
   await new Promise<void>((resolve) => {
     server = app.listen(0, () => resolve());
   });
@@ -60,7 +67,7 @@ describe("POST /v1/extract", () => {
     expect(res.status).toBe(202);
     const body = await res.json();
     expect(body.job_id).toBeTruthy();
-    expect(claims.size).toBeGreaterThan(0);
+    expect(body.claims_created).toBeGreaterThan(0);
   });
 
   it("should reject missing fields", async () => {

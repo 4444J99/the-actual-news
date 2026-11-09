@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import http from "node:http";
-import { app, stories, versions } from "../server.js";
+import { app, pool } from "../server.js";
 
 let server: http.Server;
 let baseUrl: string;
@@ -28,8 +28,8 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
-  stories.clear();
-  versions.clear();
+  await pool.query("DELETE FROM story_versions");
+  await pool.query("DELETE FROM stories");
   await new Promise<void>((resolve) => {
     server = app.listen(0, () => resolve());
   });
@@ -74,7 +74,9 @@ describe("POST /v1/stories", () => {
     });
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(versions.get(body.story_id)).toHaveLength(1);
+    const detailRes = await fetch(`/v1/stories/${body.story_id}`);
+    const detail = await detailRes.json();
+    expect(detail.versions).toHaveLength(1);
   });
 });
 
