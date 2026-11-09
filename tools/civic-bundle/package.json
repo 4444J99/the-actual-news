@@ -10,6 +10,6 @@
     "verify": "node replay.mjs"
   },
   "dependencies": {
-    "pg": "^8.19.0"
+    "pg": "^8.23.1"
   }
 }
