@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import http from "node:http";
-import { app, tasks, reviews } from "../server.js";
+import { app, pool } from "../server.js";
 
 let server: http.Server;
 let baseUrl: string;
@@ -25,8 +25,15 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
-  tasks.clear();
-  reviews.clear();
+  await pool.query("DELETE FROM reviews");
+  await pool.query("DELETE FROM verification_tasks");
+  await pool.query("DELETE FROM claims");
+  await pool.query("DELETE FROM story_versions");
+  await pool.query("DELETE FROM stories");
+  await pool.query("INSERT INTO stories (story_id, platform_id, title, state, created_at, updated_at) VALUES ('S1','plf_local_01','Test','draft',now(),now()) ON CONFLICT (story_id) DO NOTHING");
+  await pool.query("INSERT INTO story_versions (story_version_id, story_id, body_markdown, created_at) VALUES ('SV1','S1','body',now()) ON CONFLICT (story_version_id) DO NOTHING");
+  await pool.query("INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, created_at) VALUES ('C1','S1','SV1','factual','text',now()) ON CONFLICT (claim_id) DO NOTHING");
+  await pool.query("INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, created_at) VALUES ('C2','S1','SV1','factual','text',now()) ON CONFLICT (claim_id) DO NOTHING");
   await new Promise<void>((resolve) => {
     server = app.listen(0, () => resolve());
   });
@@ -112,13 +119,21 @@ describe("POST /v1/tasks/:task_id/review", () => {
     });
     const { task_id } = await createRes.json();
 
-    const res = await fetch(`/v1/tasks/${task_id}/review`, {
+    await fetch(`/v1/tasks/${task_id}/review`, {
       method: "POST",
       body: {
         actor_id: "REVIEWER1",
         verdict: "supports",
         notes: "Evidence confirms the claim",
         evidence_edges: [{ evidence_id_hash: "sha256:abc", relation: "supports", strength: 0.9 }],
+      },
+    });
+    const res = await fetch(`/v1/tasks/${task_id}/review`, {
+      method: "POST",
+      body: {
+        actor_id: "REVIEWER2",
+        verdict: "supports",
+        notes: "Confirmed",
       },
     });
     expect(res.status).toBe(201);
@@ -142,10 +157,14 @@ describe("POST /v1/tasks/:task_id/review", () => {
       method: "POST",
       body: { actor_id: "R1", verdict: "supports", notes: "OK" },
     });
+    await fetch(`/v1/tasks/${task_id}/review`, {
+      method: "POST",
+      body: { actor_id: "R2", verdict: "contradicts", notes: "Disagree" },
+    });
 
     const res = await fetch(`/v1/tasks/${task_id}/review`, {
       method: "POST",
-      body: { actor_id: "R2", verdict: "contradicts", notes: "Disagree" },
+      body: { actor_id: "R3", verdict: "supports", notes: "Late" },
     });
     expect(res.status).toBe(409);
   });
