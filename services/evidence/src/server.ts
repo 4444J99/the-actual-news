@@ -1,6 +1,7 @@
 import express from "express";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
@@ -9,7 +10,10 @@ const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
 const PORT = Number(process.env.EVIDENCE_PORT ?? DEFAULT_PORT);
 
-const BLOB_STORE_DIR = process.env.EVIDENCE_BLOB_STORE_DIR ?? "/Volumes/Archive4T/Runtime/development/tmp/evidence-blobs";
+// Evidence blob store. Defaults to an OS temp dir so the service is not tied
+// to a single machine's filesystem; production deploys set
+// EVIDENCE_BLOB_STORE_DIR (e.g. /data/evidence-blobs in Docker Compose).
+const BLOB_STORE_DIR = process.env.EVIDENCE_BLOB_STORE_DIR ?? path.join(os.tmpdir(), "evidence-blobs");
 
 // Ensure blob store directory exists
 if (!fs.existsSync(BLOB_STORE_DIR)) {
