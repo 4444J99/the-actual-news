@@ -161,7 +161,7 @@ jobs:
         run: pnpm conformance:doctor
 
       - name: Run service tests and conformance harness
-        run: pnpm -r test
+        run: pnpm -r --no-parallel test
 
   containers:
     name: Optional container boundary
