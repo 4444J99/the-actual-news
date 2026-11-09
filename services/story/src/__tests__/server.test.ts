@@ -28,6 +28,10 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
+  // claims reference story_versions (FK claims_story_version_id_fkey), and
+  // story_versions reference stories, so teardown must delete in dependency
+  // order: claims -> story_versions -> stories.
+  await pool.query("DELETE FROM claims");
   await pool.query("DELETE FROM story_versions");
   await pool.query("DELETE FROM stories");
   await new Promise<void>((resolve) => {
