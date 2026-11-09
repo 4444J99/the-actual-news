@@ -180,6 +180,10 @@ app.get("/v1/story/:story_id", async (req, res) => {
       return res.status(404).json({ code: "not_found", message: "story not found" });
     }
 
+    // Unauthenticated reads are bounded to the story's approved published
+    // version. A published record with a null publication pointer must not
+    // fall back to its latest (unreviewed) version; expose nothing instead.
+    let claimIdSet: string[] = [];
     let versionsQuery = `
       SELECT story_version_id, story_id, body_markdown, disclosure_markdown, created_at
       FROM story_versions
@@ -191,11 +195,10 @@ app.get("/v1/story/:story_id", async (req, res) => {
         versionsQuery += ` AND story_version_id = $2`;
         versionsParams.push(story.published_version_id);
       } else {
-        versionsQuery += ` ORDER BY created_at DESC LIMIT 1`;
+        versionsQuery += ` AND FALSE`;
       }
     }
     const versionsQ = await pool.query(versionsQuery, versionsParams);
-
     const versions: StoryVersion[] = versionsQ.rows;
 
     let claimsQuery = `
@@ -208,6 +211,8 @@ app.get("/v1/story/:story_id", async (req, res) => {
     if (!isAuthenticated && story.published_version_id) {
       claimsQuery += ` AND story_version_id = $2`;
       claimsParams.push(story.published_version_id);
+    } else if (!isAuthenticated) {
+      claimsQuery += ` AND FALSE`;
     }
     claimsQuery += ` ORDER BY created_at ASC`;
     const claimsQ = await pool.query(claimsQuery, claimsParams);
@@ -217,7 +222,10 @@ app.get("/v1/story/:story_id", async (req, res) => {
       entities: Array.isArray(r.entities) ? r.entities : (r.entities ?? []),
       time_window: r.time_window ?? {}
     }));
+    claimIdSet = claims.map((c) => c.claim_id);
 
+    // Evidence edges and corrections are bounded to the same approved claim
+    // set as the claims themselves, never queried across the whole story.
     const edgesQ = await pool.query(
       `
       SELECT claim_id, evidence_id_hash,
@@ -228,12 +236,10 @@ app.get("/v1/story/:story_id", async (req, res) => {
              END AS relation,
              strength
       FROM claim_evidence_edges
-      WHERE claim_id IN (
-        SELECT claim_id FROM claims WHERE story_id = $1
-      )
+      WHERE claim_id = ANY($1::text[])
       ORDER BY created_at ASC
       `,
-      [storyId]
+      [claimIdSet]
     );
 
     const evidence_edges: EvidenceEdge[] = edgesQ.rows.map((r: any) => ({
@@ -248,10 +254,10 @@ app.get("/v1/story/:story_id", async (req, res) => {
       SELECT correction_id, claim_id, reason, created_at
       FROM corrections
       WHERE platform_id = $1
-        AND claim_id IN (SELECT claim_id FROM claims WHERE story_id = $2)
+        AND claim_id = ANY($2::text[])
       ORDER BY created_at ASC
       `,
-      [env.PLATFORM_ID, storyId]
+      [env.PLATFORM_ID, claimIdSet]
     );
 
     const corrections: Correction[] = correctionsQ.rows;
@@ -488,6 +494,12 @@ const DEFAULT_MIN_PRIMARY_EVIDENCE_RATIO = 0.5;
 const DEFAULT_MAX_UNSUPPORTED_CLAIM_SHARE = 0.10;
 
 app.post("/v1/story/:story_id/publish", async (req, res) => {
+  if (!checkAuth(req)) {
+    return res.status(403).json({
+      code: "forbidden",
+      message: "publication requires an authenticated internal caller"
+    });
+  }
   const storyId = req.params.story_id;
   const storyVersionId: string | null = req.body?.story_version_id ?? null;
 
@@ -641,8 +653,23 @@ app.post("/v1/story/:story_id/publish", async (req, res) => {
     const corroborationOkDb = Boolean(m.corroboration_ok);
     const corroborationOk = pp.publish_gates.require_high_impact_corroboration ? corroborationOkDb : true;
 
-    // Review prerequisite: qualifying reviews must exist for the exact target manifest.
+    // Review prerequisite: every verification task linked to a claim in the
+    // exact target manifest must be resolved before publication, and the
+    // manifest must carry the configured quorum of decisive reviews. An
+    // aggregate count of reviewer IDs alone does not establish that each
+    // relevant task reached quorum.
     const minQuorum = Number(process.env.MIN_REVIEWER_QUORUM ?? 2);
+
+    const unresolvedQ = await client.query(
+      `SELECT count(*) AS c
+       FROM verification_tasks vt
+       JOIN claims c ON c.claim_id = vt.claim_id
+       WHERE c.story_id = $1 AND c.story_version_id = $2
+         AND vt.status <> 'resolved'`,
+      [storyId, m.story_version_id]
+    );
+    const unresolvedTasks = Number(unresolvedQ.rows[0]?.c ?? 0);
+
     const reviewQ = await client.query(
       `SELECT count(DISTINCT r.actor_id) AS c
        FROM reviews r
@@ -653,13 +680,15 @@ app.post("/v1/story/:story_id/publish", async (req, res) => {
       [storyId, m.story_version_id]
     );
     const qualifyingReviews = Number(reviewQ.rows[0]?.c ?? 0);
-    if (qualifyingReviews < minQuorum) {
+
+    if (unresolvedTasks > 0 || qualifyingReviews < minQuorum) {
       await client.query("ROLLBACK");
       return res.status(409).json({
         code: "review_required",
-        message: "target manifest lacks qualifying review quorum",
+        message: "target manifest lacks complete review quorum",
         required: minQuorum,
         found: qualifyingReviews,
+        unresolved_tasks: unresolvedTasks,
       });
     }
 
@@ -697,6 +726,30 @@ app.post("/v1/story/:story_id/publish", async (req, res) => {
       });
     }
 
+    // Bind the publication to a frozen digest of the exact contents being
+    // published: the claims, their evidence edges, and the active policy pack.
+    const pubClaimsQ = await client.query(
+      `SELECT claim_id, claim_type, text, support_status
+       FROM claims
+       WHERE story_id = $1 AND story_version_id = $2
+       ORDER BY claim_id ASC`,
+      [storyId, m.story_version_id]
+    );
+    const pubEdgesQ = await client.query(
+      `SELECT cee.claim_id, cee.evidence_id_hash, cee.relation, cee.strength
+       FROM claim_evidence_edges cee
+       JOIN claims c ON c.claim_id = cee.claim_id
+       WHERE c.story_id = $1 AND c.story_version_id = $2
+       ORDER BY cee.claim_id, cee.evidence_id_hash`,
+      [storyId, m.story_version_id]
+    );
+    const publicationDigest = hashCanonical({
+      story_version_id: m.story_version_id,
+      policy_pack_version: pp.policy_pack_version,
+      claims: pubClaimsQ.rows,
+      evidence_edges: pubEdgesQ.rows
+    });
+
     await client.query(
       `
       UPDATE stories
@@ -718,6 +771,7 @@ app.post("/v1/story/:story_id/publish", async (req, res) => {
         JSON.stringify({
           story_id: storyId,
           story_version_id: m.story_version_id,
+          publication_digest: publicationDigest,
           publication_scope: "local"
         })
       ]

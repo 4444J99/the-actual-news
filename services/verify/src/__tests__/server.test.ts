@@ -10,7 +10,10 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
     const url = new URL(path, baseUrl);
     const req = http.request(url, {
       method: opts.method ?? "GET",
-      headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+      headers: {
+        "x-api-key": "dev-internal-key",
+        ...(opts.body ? { "Content-Type": "application/json" } : {})
+      },
     }, (res) => {
       let data = "";
       res.on("data", (chunk) => { data += chunk; });
