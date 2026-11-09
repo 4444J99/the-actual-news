@@ -1,35 +1,15 @@
 import express from "express";
 import crypto from "node:crypto";
+import { loadEnv, DEFAULT_PORT } from "./env.js";
+import { makePool } from "./db.js";
 
-const PORT = Number(process.env.VERIFY_PORT ?? 8084);
-const PLATFORM_ID = process.env.PLATFORM_ID ?? "unknown";
+const env = loadEnv();
+const pool = makePool(env.POSTGRES_URI);
+const PORT = Number(process.env.VERIFY_PORT ?? DEFAULT_PORT);
 
 type TaskStatus = "open" | "in_progress" | "resolved";
 type TaskType = "evidence_gap" | "corroboration" | "contradiction" | "coi_check";
 type Verdict = "supports" | "contradicts" | "context_only" | "cannot_determine";
-
-type VerificationTask = {
-  task_id: string;
-  story_id: string;
-  claim_id: string;
-  task_type: TaskType;
-  status: TaskStatus;
-  created_at: string;
-};
-
-type Review = {
-  review_id: string;
-  task_id: string;
-  actor_id: string;
-  verdict: Verdict;
-  notes: string;
-  evidence_edges: { evidence_id_hash: string; relation: string; strength: number }[];
-  created_at: string;
-};
-
-// In-memory stores
-const tasks = new Map<string, VerificationTask>();
-const reviews = new Map<string, Review[]>();
 
 function ulid(): string {
   return (
@@ -42,27 +22,36 @@ export const app = express();
 app.use(express.json());
 
 app.get("/v1/health", (_req, res) => {
-  res.status(200).json({ ok: true, service: "verify", platform_id: PLATFORM_ID });
+  res.status(200).json({ ok: true, service: "verify", platform_id: env.PLATFORM_ID });
 });
 
 // GET /v1/tasks — list verification tasks
-app.get("/v1/tasks", (req, res) => {
+app.get("/v1/tasks", async (req, res) => {
   const statusFilter = req.query.status ? String(req.query.status) : null;
   const allowedStatuses = new Set(["open", "in_progress", "resolved"]);
 
-  let items = Array.from(tasks.values());
+  try {
+    const q = await pool.query(
+      `SELECT task_id, platform_id, story_id, claim_id, task_type, status, created_at
+       FROM verification_tasks
+       WHERE platform_id = $1
+         AND ($2::text IS NULL OR status = $2)
+       ORDER BY created_at ASC`,
+      [env.PLATFORM_ID, statusFilter && allowedStatuses.has(statusFilter) ? statusFilter : null]
+    );
 
-  if (statusFilter && allowedStatuses.has(statusFilter)) {
-    items = items.filter((t) => t.status === statusFilter);
+    return res.status(200).json({ items: q.rows });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
   }
-
-  items.sort((a, b) => a.created_at.localeCompare(b.created_at));
-
-  return res.status(200).json({ items });
 });
 
-// POST /v1/tasks — create a verification task (not in OpenAPI but needed)
-app.post("/v1/tasks", (req, res) => {
+// POST /v1/tasks — create a verification task
+app.post("/v1/tasks", async (req, res) => {
   const { story_id, claim_id, task_type } = req.body ?? {};
 
   if (!story_id || !claim_id || !task_type) {
@@ -83,33 +72,33 @@ app.post("/v1/tasks", (req, res) => {
   const task_id = ulid();
   const now = new Date().toISOString();
 
-  const task: VerificationTask = {
-    task_id,
-    story_id,
-    claim_id,
-    task_type,
-    status: "open",
-    created_at: now,
-  };
+  try {
+    await pool.query(
+      `INSERT INTO verification_tasks (task_id, platform_id, story_id, claim_id, task_type, status, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'open', $6)`,
+      [task_id, env.PLATFORM_ID, story_id, claim_id, task_type, now]
+    );
 
-  tasks.set(task_id, task);
-  reviews.set(task_id, []);
-
-  return res.status(201).json(task);
+    return res.status(201).json({
+      task_id,
+      platform_id: env.PLATFORM_ID,
+      story_id,
+      claim_id,
+      task_type,
+      status: "open",
+      created_at: now,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
+  }
 });
 
 // POST /v1/tasks/:task_id/review — submit a review
-app.post("/v1/tasks/:task_id/review", (req, res) => {
-  const task = tasks.get(req.params.task_id);
-
-  if (!task) {
-    return res.status(404).json({ code: "not_found", message: "task not found" });
-  }
-
-  if (task.status === "resolved") {
-    return res.status(409).json({ code: "conflict", message: "task already resolved" });
-  }
-
+app.post("/v1/tasks/:task_id/review", async (req, res) => {
   const { actor_id, verdict, notes, evidence_edges } = req.body ?? {};
 
   if (!actor_id || !verdict || !notes) {
@@ -127,31 +116,108 @@ app.post("/v1/tasks/:task_id/review", (req, res) => {
     });
   }
 
-  const now = new Date().toISOString();
-  const review: Review = {
-    review_id: ulid(),
-    task_id: task.task_id,
-    actor_id,
-    verdict,
-    notes,
-    evidence_edges: evidence_edges ?? [],
-    created_at: now,
-  };
+  try {
+    // Ensure actor exists (upsert)
+    await pool.query(
+      `INSERT INTO actors (actor_id, platform_id, display_name, role, created_at)
+       VALUES ($1, $2, $3, 'reviewer', now())
+       ON CONFLICT (actor_id) DO NOTHING`,
+      [actor_id, env.PLATFORM_ID, actor_id]
+    );
 
-  const taskReviews = reviews.get(task.task_id) ?? [];
-  taskReviews.push(review);
-  reviews.set(task.task_id, taskReviews);
+    // Check for duplicate review by same actor
+    const dupCheck = await pool.query(
+      `SELECT review_id FROM reviews WHERE task_id = $1 AND actor_id = $2 LIMIT 1`,
+      [req.params.task_id, actor_id]
+    );
+    if (dupCheck.rowCount && dupCheck.rowCount > 0) {
+      return res.status(409).json({ code: "conflict", message: "actor already reviewed this task" });
+    }
 
-  task.status = "resolved";
+    const taskQ = await pool.query(
+      `SELECT task_id, status FROM verification_tasks WHERE task_id = $1 AND platform_id = $2 LIMIT 1`,
+      [req.params.task_id, env.PLATFORM_ID]
+    );
 
-  return res.status(201).json(review);
+    if (taskQ.rowCount === 0) {
+      return res.status(404).json({ code: "not_found", message: "task not found" });
+    }
+
+    if (taskQ.rows[0].status === "resolved") {
+      return res.status(409).json({ code: "conflict", message: "task already resolved" });
+    }
+
+    const now = new Date().toISOString();
+    const review_id = ulid();
+
+    await pool.query(
+      `INSERT INTO reviews (review_id, task_id, actor_id, verdict, notes, evidence_edges, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+      [review_id, req.params.task_id, actor_id, verdict, notes, JSON.stringify(evidence_edges ?? []), now]
+    );
+
+    // Quorum: count distinct reviewers with qualifying (decisive) verdicts only
+    const quorumQ = await pool.query(
+      `SELECT count(DISTINCT actor_id) as reviewer_count FROM reviews WHERE task_id = $1 AND verdict IN ('supports', 'contradicts')`,
+      [req.params.task_id]
+    );
+    const reviewerCount = Number(quorumQ.rows[0]?.reviewer_count ?? 0);
+    const minQuorum = Number(process.env.MIN_REVIEWER_QUORUM ?? 2);
+
+    // Resolve only if quorum met
+    if (reviewerCount >= minQuorum) {
+      await pool.query(
+        `UPDATE verification_tasks SET status = 'resolved' WHERE task_id = $1`,
+        [req.params.task_id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE verification_tasks SET status = 'in_progress' WHERE task_id = $1`,
+        [req.params.task_id]
+      );
+    }
+
+    // If verdict is supports/contradicts, update claim support status
+    if (verdict === "contradicts") {
+      await pool.query(
+        `UPDATE claims SET support_status = 'contradicted'
+         WHERE claim_id = (SELECT claim_id FROM verification_tasks WHERE task_id = $1)`,
+        [req.params.task_id]
+      );
+    } else if (verdict === "supports") {
+      await pool.query(
+        `UPDATE claims SET support_status = CASE
+           WHEN support_status = 'unsupported' THEN 'partially_supported'
+           ELSE support_status
+         END
+         WHERE claim_id = (SELECT claim_id FROM verification_tasks WHERE task_id = $1)`,
+        [req.params.task_id]
+      );
+    }
+
+    return res.status(201).json({
+      review_id,
+      task_id: req.params.task_id,
+      actor_id,
+      verdict,
+      notes,
+      evidence_edges: evidence_edges ?? [],
+      created_at: now,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
+  }
 });
 
-export { tasks, reviews };
+export { pool };
 
 if (process.env.NODE_ENV !== "test") {
   const server = app.listen(PORT, () => {
-    console.log(JSON.stringify({ service: "verify", port: PORT, platform_id: PLATFORM_ID }));
+    console.log(JSON.stringify({ service: "verify", port: PORT, platform_id: env.PLATFORM_ID }));
   });
 
   process.on("SIGTERM", () => server.close());

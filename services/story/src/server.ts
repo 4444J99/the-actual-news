@@ -1,8 +1,12 @@
 import express from "express";
 import crypto from "node:crypto";
+import { loadEnv, DEFAULT_PORT } from "./env.js";
+import { makePool } from "./db.js";
 
-const PORT = Number(process.env.STORY_PORT ?? 8081);
-const PLATFORM_ID = process.env.PLATFORM_ID ?? "unknown";
+const env = loadEnv();
+const pool = makePool(env.POSTGRES_URI);
+
+const PORT = Number(process.env.STORY_PORT ?? DEFAULT_PORT);
 
 type Story = {
   story_id: string;
@@ -17,13 +21,9 @@ type StoryVersion = {
   story_version_id: string;
   story_id: string;
   body_markdown: string;
-  disclosure_markdown?: string;
+  disclosure_markdown?: string | null;
   created_at: string;
 };
-
-// In-memory store
-const stories = new Map<string, Story>();
-const versions = new Map<string, StoryVersion[]>();
 
 function ulid(): string {
   return (
@@ -36,11 +36,11 @@ export const app = express();
 app.use(express.json());
 
 app.get("/v1/health", (_req, res) => {
-  res.status(200).json({ ok: true, service: "story", platform_id: PLATFORM_ID });
+  res.status(200).json({ ok: true, service: "story", platform_id: env.PLATFORM_ID });
 });
 
 // POST /v1/stories — create a story
-app.post("/v1/stories", (req, res) => {
+app.post("/v1/stories", async (req, res) => {
   const { title, initial_body_markdown } = req.body ?? {};
 
   if (!title || typeof title !== "string") {
@@ -50,105 +50,219 @@ app.post("/v1/stories", (req, res) => {
   const now = new Date().toISOString();
   const story_id = ulid();
 
-  const story: Story = {
-    story_id,
-    platform_id: PLATFORM_ID,
-    title,
-    state: "draft",
-    created_at: now,
-    updated_at: now,
-  };
+  try {
+    await pool.query(
+      `INSERT INTO stories (story_id, platform_id, title, state, created_at, updated_at)
+       VALUES ($1, $2, $3, 'draft', $4, $4)`,
+      [story_id, env.PLATFORM_ID, title, now]
+    );
 
-  stories.set(story_id, story);
-  versions.set(story_id, []);
+    if (initial_body_markdown && typeof initial_body_markdown === "string") {
+      const version_id = ulid();
+      await pool.query(
+        `INSERT INTO story_versions (story_version_id, story_id, body_markdown, created_at)
+         VALUES ($1, $2, $3, $4)`,
+        [version_id, story_id, initial_body_markdown, now]
+      );
+    }
 
-  if (initial_body_markdown) {
-    const version: StoryVersion = {
-      story_version_id: ulid(),
+    return res.status(201).json({
       story_id,
-      body_markdown: initial_body_markdown,
+      platform_id: env.PLATFORM_ID,
+      title,
+      state: "draft",
       created_at: now,
-    };
-    versions.get(story_id)!.push(version);
+      updated_at: now,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
   }
-
-  return res.status(201).json(story);
 });
 
 // GET /v1/stories — list stories
-app.get("/v1/stories", (req, res) => {
+app.get("/v1/stories", async (req, res) => {
   const stateFilter = req.query.state ? String(req.query.state) : null;
   const limitRaw = Number(req.query.limit ?? 50);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200) : 50;
 
-  let items = Array.from(stories.values()).filter(
-    (s) => s.platform_id === PLATFORM_ID
-  );
-
   const allowedStates = new Set(["draft", "review", "published"]);
-  if (stateFilter && allowedStates.has(stateFilter)) {
-    items = items.filter((s) => s.state === stateFilter);
+  const validState = stateFilter && allowedStates.has(stateFilter) ? stateFilter : null;
+
+  try {
+    const q = await pool.query(
+      `SELECT story_id, platform_id, title, state, created_at, updated_at
+       FROM stories
+       WHERE platform_id = $1
+         AND ($2::text IS NULL OR state = $2)
+       ORDER BY updated_at DESC
+       LIMIT $3`,
+      [env.PLATFORM_ID, validState, limit]
+    );
+
+    return res.status(200).json({ items: q.rows });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
   }
-
-  items.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-  items = items.slice(0, limit);
-
-  return res.status(200).json({ items });
 });
 
 // GET /v1/stories/:story_id — get story with versions
-app.get("/v1/stories/:story_id", (req, res) => {
-  const story = stories.get(req.params.story_id);
+app.get("/v1/stories/:story_id", async (req, res) => {
+  try {
+    const storyQ = await pool.query(
+      `SELECT story_id, platform_id, title, state, created_at, updated_at
+       FROM stories
+       WHERE story_id = $1 AND platform_id = $2
+       LIMIT 1`,
+      [req.params.story_id, env.PLATFORM_ID]
+    );
 
-  if (!story || story.platform_id !== PLATFORM_ID) {
-    return res.status(404).json({ code: "not_found", message: "story not found" });
+    if (storyQ.rowCount === 0) {
+      return res.status(404).json({ code: "not_found", message: "story not found" });
+    }
+
+    const versionsQ = await pool.query(
+      `SELECT story_version_id, story_id, body_markdown, disclosure_markdown, created_at
+       FROM story_versions
+       WHERE story_id = $1
+       ORDER BY created_at DESC`,
+      [req.params.story_id]
+    );
+
+    return res.status(200).json({
+      ...storyQ.rows[0],
+      versions: versionsQ.rows,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
   }
-
-  const storyVersions = versions.get(story.story_id) ?? [];
-
-  return res.status(200).json({
-    ...story,
-    versions: storyVersions,
-  });
 });
 
 // POST /v1/stories/:story_id/versions — add a version
-app.post("/v1/stories/:story_id/versions", (req, res) => {
-  const story = stories.get(req.params.story_id);
-
-  if (!story || story.platform_id !== PLATFORM_ID) {
-    return res.status(404).json({ code: "not_found", message: "story not found" });
-  }
-
+app.post("/v1/stories/:story_id/versions", async (req, res) => {
   const { body_markdown, disclosure_markdown } = req.body ?? {};
 
   if (!body_markdown || typeof body_markdown !== "string") {
     return res.status(400).json({ code: "bad_request", message: "body_markdown is required" });
   }
 
-  const now = new Date().toISOString();
-  const version: StoryVersion = {
-    story_version_id: ulid(),
-    story_id: story.story_id,
-    body_markdown,
-    disclosure_markdown,
-    created_at: now,
-  };
+  try {
+    const storyQ = await pool.query(
+      `SELECT story_id, platform_id FROM stories WHERE story_id = $1 AND platform_id = $2 LIMIT 1`,
+      [req.params.story_id, env.PLATFORM_ID]
+    );
 
-  const list = versions.get(story.story_id) ?? [];
-  list.push(version);
-  versions.set(story.story_id, list);
+    if (storyQ.rowCount === 0) {
+      return res.status(404).json({ code: "not_found", message: "story not found" });
+    }
 
-  story.updated_at = now;
+    const now = new Date().toISOString();
+    const version_id = ulid();
 
-  return res.status(201).json(version);
+    await pool.query(
+      `INSERT INTO story_versions (story_version_id, story_id, body_markdown, disclosure_markdown, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [version_id, req.params.story_id, body_markdown, disclosure_markdown ?? null, now]
+    );
+
+    await pool.query(
+      `UPDATE stories SET updated_at = $1 WHERE story_id = $2 AND platform_id = $3`,
+      [now, req.params.story_id, env.PLATFORM_ID]
+    );
+
+    return res.status(201).json({
+      story_version_id: version_id,
+      story_id: req.params.story_id,
+      body_markdown,
+      disclosure_markdown: disclosure_markdown ?? null,
+      created_at: now,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
+  }
 });
 
-export { stories, versions };
+// PUT /v1/stories/:story_id/state — transition story state
+app.put("/v1/stories/:story_id/state", async (req, res) => {
+  const { state } = req.body ?? {};
+  const allowedTransitions: Record<string, string[]> = {
+    draft: ["review"],
+    review: ["published"],
+  };
+
+  if (!state || !["draft", "review", "published"].includes(state)) {
+    return res.status(400).json({ code: "bad_request", message: "state must be draft, review, or published" });
+  }
+
+  try {
+    const storyQ = await pool.query(
+      `SELECT story_id, state FROM stories WHERE story_id = $1 AND platform_id = $2 LIMIT 1`,
+      [req.params.story_id, env.PLATFORM_ID]
+    );
+
+    if (storyQ.rowCount === 0) {
+      return res.status(404).json({ code: "not_found", message: "story not found" });
+    }
+
+    const currentState = storyQ.rows[0].state;
+    if (currentState === "published") {
+      return res.status(409).json({ code: "conflict", message: "published stories cannot transition" });
+    }
+
+    const allowed = allowedTransitions[currentState] ?? [];
+    if (!allowed.includes(state)) {
+      return res.status(409).json({
+        code: "conflict",
+        message: `cannot transition from ${currentState} to ${state}`
+      });
+    }
+
+    // published transition must go through gateway publish gate, not this endpoint
+    if (state === "published") {
+      return res.status(403).json({
+        code: "forbidden",
+        message: "publication must go through the gateway publish gate"
+      });
+    }
+
+    const now = new Date().toISOString();
+    await pool.query(
+      `UPDATE stories SET state = $1, updated_at = $2 WHERE story_id = $3 AND platform_id = $4`,
+      [state, now, req.params.story_id, env.PLATFORM_ID]
+    );
+
+    return res.status(200).json({ story_id: req.params.story_id, state, updated_at: now });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
+  }
+});
+
+export { } from "./db.js";
+
+export { pool };
 
 if (process.env.NODE_ENV !== "test") {
   const server = app.listen(PORT, () => {
-    console.log(JSON.stringify({ service: "story", port: PORT, platform_id: PLATFORM_ID }));
+    console.log(JSON.stringify({ service: "story", port: PORT, platform_id: env.PLATFORM_ID }));
   });
 
   process.on("SIGTERM", () => server.close());
