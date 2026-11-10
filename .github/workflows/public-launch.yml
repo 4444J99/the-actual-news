@@ -160,8 +160,12 @@ jobs:
       - name: Check database conformance connection
         run: pnpm conformance:doctor
 
+      # The service suites share one Postgres database and their fixtures
+      # DELETE + re-seed the same tables, so they must run one at a time.
+      # NOTE: --no-parallel does NOT serialize pnpm recursive runs (it only
+      # negates --parallel); --workspace-concurrency=1 is the real knob.
       - name: Run service tests and conformance harness
-        run: pnpm -r --no-parallel test
+        run: pnpm -r --workspace-concurrency=1 test
 
   containers:
     name: Optional container boundary
