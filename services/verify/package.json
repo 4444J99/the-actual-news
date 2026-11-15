@@ -11,11 +11,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.3",
+    "@types/pg": "8.20.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3",
     "vitest": "4.1.8"

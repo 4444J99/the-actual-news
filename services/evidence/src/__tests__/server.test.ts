@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import http from "node:http";
-import { app, evidence } from "../server.js";
+import { app, pool } from "../server.js";
 
 let server: http.Server;
 let baseUrl: string;
@@ -25,7 +25,7 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
-  evidence.clear();
+  await pool.query("DELETE FROM evidence_objects");
   await new Promise<void>((resolve) => {
     server = app.listen(0, () => resolve());
   });

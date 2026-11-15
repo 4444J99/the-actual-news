@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -12,7 +13,9 @@ if (!POSTGRES_URI) {
   process.exit(2);
 }
 
-const ROOT = process.cwd();
+// Resolve from this file so `pnpm -r test` (cwd = tools/conformance) and
+// `node tools/conformance/run.mjs` (cwd = repo root) both work.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const FIXTURES_DIR = path.join(ROOT, "tools", "conformance", "fixtures");
 const SQL_DIR = path.join(ROOT, "tools", "conformance", "sql");
 const SCHEMA_SQL = fs.readFileSync(path.join(SQL_DIR, "schema.sql"), "utf8");
@@ -194,17 +197,19 @@ async function runFixture(pool, fixturePath) {
     await insertRows(client, "stories", ledger.stories ?? []);
     await insertRows(client, "story_versions", ledger.story_versions ?? []);
     await insertRows(client, "claims", (ledger.claims ?? []).map((c) => ({
+      jurisdiction: null,
+      confidence_model: null,
+      confidence_review: null,
+      ...c,
+      // Stringify AFTER the spread: pg sends a raw JS array as a Postgres array
+      // literal, which a jsonb column rejects ("invalid input syntax for type json").
       entities: JSON.stringify(c.entities ?? []),
-      time_window: JSON.stringify(c.time_window ?? {}),
-      jurisdiction: c.jurisdiction ?? null,
-      confidence_model: c.confidence_model ?? null,
-      confidence_review: c.confidence_review ?? null,
-      ...c
+      time_window: JSON.stringify(c.time_window ?? {})
     })));
     await insertRows(client, "evidence_objects", (ledger.evidence_objects ?? []).map((e) => ({
-      extracted_text: e.extracted_text ?? null,
-      provenance: JSON.stringify(e.provenance ?? {}),
-      ...e
+      extracted_text: null,
+      ...e,
+      provenance: JSON.stringify(e.provenance ?? {})
     })));
     await insertRows(client, "claim_evidence_edges", (ledger.claim_evidence_edges ?? []).map((e) => ({
       reviewer_actor_id: e.reviewer_actor_id ?? null,
@@ -212,8 +217,8 @@ async function runFixture(pool, fixturePath) {
       ...e
     })));
     await insertRows(client, "corrections", (ledger.corrections ?? []).map((c) => ({
-      details: JSON.stringify(c.details ?? {}),
-      ...c
+      ...c,
+      details: JSON.stringify(c.details ?? {})
     })));
 
     const P = fixture.policy_pack;
@@ -277,16 +282,20 @@ async function runFixture(pool, fixturePath) {
       assertEq("publish_txn.story_state", st, "published");
       assertEq("publish_txn.outbox_count", oc, 1);
     } else {
-      let failedAsExpected = false;
+      // Contract: publish_txn.sql is NON-RAISING. A failed gate is a refusal:
+      // it returns publish_gate_pass=false and writes no outbox row. An
+      // exception here is a real defect, not an expected failure.
       await client.query("BEGIN");
+      let refusal;
       try {
-        await execInSchema(client, schema, { text: PUBLISH_TXN_SQL, values: publishArgs });
-      } catch (e) {
-        failedAsExpected = true;
+        refusal = await execInSchema(client, schema, { text: PUBLISH_TXN_SQL, values: publishArgs });
       } finally {
         await client.query("ROLLBACK");
       }
-      if (!failedAsExpected) throw new Error("publish_txn: expected failure but succeeded");
+      const refusalRow = refusal?.rows?.[0];
+      if (!refusalRow) throw new Error("publish_txn: refusal returned no row");
+      assertEq("publish_txn.publish_gate_pass", Boolean(refusalRow.publish_gate_pass), false);
+      assertEq("publish_txn.refusal_outbox_count", Number(refusalRow.outbox_count), 0);
 
       const check = await execInSchema(
         client,

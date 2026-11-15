@@ -71,18 +71,16 @@ describe("loadEnv required-variable guard", () => {
 
   it("returns valid values unchanged (exact bytes, no silent normalization)", () => {
     stubBoth("  records-watch  ", "postgres://db:5432/news");
-    expect(loadEnv()).toEqual({
-      PLATFORM_ID: "  records-watch  ",
-      POSTGRES_URI: "postgres://db:5432/news",
-    });
+    const env = loadEnv();
+    expect(env.PLATFORM_ID).toBe("  records-watch  ");
+    expect(env.POSTGRES_URI).toBe("postgres://db:5432/news");
   });
 
   it("accepts both valid keys", () => {
     stubBoth("records-watch", "postgres://db:5432/news");
-    expect(loadEnv()).toEqual({
-      PLATFORM_ID: "records-watch",
-      POSTGRES_URI: "postgres://db:5432/news",
-    });
+    const env = loadEnv();
+    expect(env.PLATFORM_ID).toBe("records-watch");
+    expect(env.POSTGRES_URI).toBe("postgres://db:5432/news");
   });
 
   it("restores originally-absent and originally-present entries after every test", () => {
@@ -95,6 +93,6 @@ describe("loadEnv required-variable guard", () => {
     expect(DEFAULT_PORT).toBe(8080);
     stubBoth("records-watch", "postgres://db:5432/news");
     const env = loadEnv();
-    expect(Object.keys(env).sort()).toEqual(["PLATFORM_ID", "POSTGRES_URI"]);
+    expect(Object.keys(env).sort()).toEqual(["PLATFORM_ID", "POLICY_PACK", "POSTGRES_URI"].sort());
   });
 });

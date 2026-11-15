@@ -1,39 +1,14 @@
 import express from "express";
 import crypto from "node:crypto";
+import { loadEnv, DEFAULT_PORT } from "./env.js";
+import { makePool } from "./db.js";
 
-const PORT = Number(process.env.CLAIM_PORT ?? 8082);
-const PLATFORM_ID = process.env.PLATFORM_ID ?? "unknown";
+const env = loadEnv();
+const pool = makePool(env.POSTGRES_URI);
+const PORT = Number(process.env.CLAIM_PORT ?? DEFAULT_PORT);
 
 type ClaimType = "factual" | "statistical" | "attribution" | "interpretation";
 type SupportStatus = "unsupported" | "partially_supported" | "supported" | "contradicted";
-
-type Claim = {
-  claim_id: string;
-  story_id: string;
-  story_version_id: string;
-  claim_type: ClaimType;
-  text: string;
-  entities: string[];
-  time_window?: { start?: string; end?: string };
-  jurisdiction?: string | null;
-  support_status: SupportStatus;
-  confidence_model?: number | null;
-  confidence_review?: number | null;
-  created_at: string;
-};
-
-type ExtractionJob = {
-  job_id: string;
-  platform_id: string;
-  story_id: string;
-  story_version_id: string;
-  status: "pending" | "completed" | "failed";
-  created_at: string;
-};
-
-// In-memory stores
-const claims = new Map<string, Claim>();
-const jobs = new Map<string, ExtractionJob>();
 
 function ulid(): string {
   return (
@@ -41,77 +16,6 @@ function ulid(): string {
     crypto.randomBytes(10).toString("hex").toUpperCase()
   ).slice(0, 26);
 }
-
-export const app = express();
-app.use(express.json());
-
-app.get("/v1/health", (_req, res) => {
-  res.status(200).json({ ok: true, service: "claim", platform_id: PLATFORM_ID });
-});
-
-// POST /v1/extract — start claim extraction
-app.post("/v1/extract", (req, res) => {
-  const { platform_id, story_id, story_version_id, body_markdown, model_policy } = req.body ?? {};
-
-  if (!story_id || !story_version_id || !body_markdown) {
-    return res.status(400).json({
-      code: "bad_request",
-      message: "story_id, story_version_id, and body_markdown are required",
-    });
-  }
-
-  const job_id = ulid();
-  const now = new Date().toISOString();
-
-  const job: ExtractionJob = {
-    job_id,
-    platform_id: platform_id ?? PLATFORM_ID,
-    story_id,
-    story_version_id,
-    status: "pending",
-    created_at: now,
-  };
-  jobs.set(job_id, job);
-
-  // Simulate basic claim extraction from markdown
-  const sentences = body_markdown
-    .split(/[.!?]+/)
-    .map((s: string) => s.trim())
-    .filter((s: string) => s.length > 20);
-
-  const maxClaims = model_policy?.max_claims ?? 200;
-  const extracted = sentences.slice(0, maxClaims);
-
-  for (const text of extracted) {
-    const claim: Claim = {
-      claim_id: ulid(),
-      story_id,
-      story_version_id,
-      claim_type: detectClaimType(text),
-      text,
-      entities: extractEntities(text),
-      support_status: "unsupported",
-      confidence_model: null,
-      confidence_review: null,
-      created_at: now,
-    };
-    claims.set(claim.claim_id, claim);
-  }
-
-  job.status = "completed";
-
-  return res.status(202).json({ job_id });
-});
-
-// GET /v1/stories/:story_id/claims — list claims for a story
-app.get("/v1/stories/:story_id/claims", (req, res) => {
-  const story_id = req.params.story_id;
-  const items = Array.from(claims.values())
-    .filter((c) => c.story_id === story_id)
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
-
-  return res.status(200).json({ items });
-});
 
 function detectClaimType(text: string): ClaimType {
   if (/\d+%|\$[\d,]+|million|billion|\d+\s*(people|cases|deaths)/i.test(text)) {
@@ -130,11 +34,134 @@ function extractEntities(text: string): string[] {
     .slice(0, 5);
 }
 
-export { claims, jobs };
+export const app = express();
+app.use(express.json());
+
+app.get("/v1/health", (_req, res) => {
+  res.status(200).json({ ok: true, service: "claim", platform_id: env.PLATFORM_ID });
+});
+
+// POST /v1/extract — start claim extraction
+app.post("/v1/extract", async (req, res) => {
+  const { platform_id, story_id, story_version_id, body_markdown, model_policy } = req.body ?? {};
+
+  if (!story_id || !story_version_id || !body_markdown) {
+    return res.status(400).json({
+      code: "bad_request",
+      message: "story_id, story_version_id, and body_markdown are required",
+    });
+  }
+
+  const pid = platform_id ?? env.PLATFORM_ID;
+  const job_id = ulid();
+  const now = new Date().toISOString();
+
+  try {
+    // Record extraction job
+    // (jobs table not in schema; we track via claims directly)
+
+    const sentences = String(body_markdown)
+      .split(/[.!?]+/)
+      .map((s: string) => s.trim())
+      .filter((s: string) => s.length > 20);
+
+    const maxClaims = model_policy?.max_claims ?? 200;
+    const extracted = sentences.slice(0, maxClaims);
+
+    const claimIds: string[] = [];
+    for (const text of extracted) {
+      const claim_id = ulid();
+      await pool.query(
+        `INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, entities, time_window, jurisdiction, support_status, confidence_model, confidence_review, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, 'unsupported', $9, $10, $11)`,
+        [
+          claim_id,
+          story_id,
+          story_version_id,
+          detectClaimType(text),
+          text,
+          JSON.stringify(extractEntities(text)),
+          JSON.stringify({}),
+          null,
+          null,
+          null,
+          now,
+        ]
+      );
+      claimIds.push(claim_id);
+    }
+
+    return res.status(202).json({ job_id, claims_created: claimIds.length, claim_ids: claimIds });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
+  }
+});
+
+// GET /v1/stories/:story_id/claims — list claims for a story
+app.get("/v1/stories/:story_id/claims", async (req, res) => {
+  try {
+    const q = await pool.query(
+      `SELECT claim_id, story_id, story_version_id, claim_type, text, entities, time_window,
+              jurisdiction, support_status, confidence_model, confidence_review, created_at
+       FROM claims
+       WHERE story_id = $1
+       ORDER BY created_at ASC`,
+      [req.params.story_id]
+    );
+
+    const items = q.rows.map((r: any) => ({
+      ...r,
+      entities: Array.isArray(r.entities) ? r.entities : (r.entities ?? []),
+      time_window: r.time_window ?? {},
+    }));
+
+    return res.status(200).json({ items });
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
+  }
+});
+
+// PUT /v1/claims/:claim_id/support — update claim support status
+app.put("/v1/claims/:claim_id/support", async (req, res) => {
+  const { support_status } = req.body ?? {};
+  const allowed = new Set(["unsupported", "partially_supported", "supported", "contradicted"]);
+  if (!support_status || !allowed.has(support_status)) {
+    return res.status(400).json({ code: "bad_request", message: "invalid support_status" });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE claims SET support_status = $1 WHERE claim_id = $2 RETURNING claim_id, support_status`,
+      [support_status, req.params.claim_id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ code: "not_found", message: "claim not found" });
+    }
+
+    return res.status(200).json(result.rows[0]);
+  } catch (err: any) {
+    return res.status(500).json({
+      code: "internal_error",
+      message: "unexpected server error",
+      details: { error: String(err?.message ?? err) }
+    });
+  }
+});
+
+export { pool };
 
 if (process.env.NODE_ENV !== "test") {
   const server = app.listen(PORT, () => {
-    console.log(JSON.stringify({ service: "claim", port: PORT, platform_id: PLATFORM_ID }));
+    console.log(JSON.stringify({ service: "claim", port: PORT, platform_id: env.PLATFORM_ID }));
   });
 
   process.on("SIGTERM", () => server.close());
