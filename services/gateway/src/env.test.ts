@@ -83,10 +83,21 @@ describe("loadEnv required-variable guard", () => {
     expect(env.POSTGRES_URI).toBe("postgres://db:5432/news");
   });
 
-  it("restores originally-absent and originally-present entries after every test", () => {
-    expect(ORIGINAL.PLATFORM_ID).toBeUndefined();
-    stubBoth(" ", " ");
-    expect(() => loadEnv()).toThrow();
+  // Proves the afterEach restore whatever the ambient environment holds:
+  // test A stubs sentinel values and observes loadEnv() seeing them; test B
+  // (which runs after A's afterEach) asserts the ambient entries are back.
+  // These two tests are order-dependent by design — vitest runs the `it`
+  // blocks of one file in declaration order.
+  it("stubs are visible to loadEnv during the test", () => {
+    stubBoth("sentinel-platform", "postgres://sentinel:5432/news");
+    const env = loadEnv();
+    expect(env.PLATFORM_ID).toBe("sentinel-platform");
+    expect(env.POSTGRES_URI).toBe("postgres://sentinel:5432/news");
+  });
+
+  it("ambient entries survive the previous test's stubs", () => {
+    expect(process.env.PLATFORM_ID).toBe(ORIGINAL.PLATFORM_ID);
+    expect(process.env.POSTGRES_URI).toBe(ORIGINAL.POSTGRES_URI);
   });
 
   it("keeps DEFAULT_PORT and the public interface unchanged", () => {
