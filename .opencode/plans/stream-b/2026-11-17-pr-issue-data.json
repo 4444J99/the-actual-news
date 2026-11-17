@@ -1,0 +1,67 @@
+{
+ "repo": "the-actual-news",
+ "slug": "4444J99/the-actual-news",
+ "archived_upstream": false,
+ "prs": {
+  "prs_total": 112,
+  "prs_merged": 43,
+  "prs_open": 0,
+  "prs_closed_unmerged": 69
+ },
+ "closed_classes": {
+  "abandoned": 62,
+  "dep_superseded": 1,
+  "series_superseded": 6
+ },
+ "supersession_links": [
+  {
+   "old": 20,
+   "new": 30,
+   "class": "series_superseded",
+   "title": "build(deps): Bump next from 16.1.6 to 16.1.7 in the npm_and_yarn group across 1 directory"
+  },
+  {
+   "old": 34,
+   "new": 50,
+   "class": "series_superseded",
+   "title": "build(deps): Bump the npm_and_yarn group across 6 directories with 3 updates"
+  },
+  {
+   "old": 54,
+   "new": 119,
+   "class": "series_superseded",
+   "title": "build(deps): Bump the github-actions-deps group across 1 directory with 2 updates"
+  },
+  {
+   "old": 55,
+   "new": 119,
+   "class": "series_superseded",
+   "title": "build(deps): Bump the github-actions-deps group across 1 directory with 3 updates"
+  },
+  {
+   "old": 56,
+   "new": 119,
+   "class": "series_superseded",
+   "title": "build(deps): Bump the github-actions-deps group across 1 directory with 2 updates"
+  },
+  {
+   "old": 65,
+   "new": 118,
+   "class": "series_superseded",
+   "title": "build(deps-dev): Bump vitest from 4.1.0 to 4.1.11 in /services/simulation in the npm_and_yarn group across 1 directory"
+  },
+  {
+   "old": 113,
+   "new": 118,
+   "class": "dep_superseded",
+   "title": "build(deps-dev): Bump vitest from 4.1.8 to 4.1.11 in /services/ingestion in the npm_and_yarn group across 1 directory"
+  }
+ ],
+ "open_pr_actions": [],
+ "issues": {
+  "total": 8,
+  "open": 5,
+  "stale": 0
+ },
+ "generated": "2026-11-17"
+}
