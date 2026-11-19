@@ -2,6 +2,7 @@ import express from "express";
 import crypto from "node:crypto";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
+import { reviewRateLimiter } from "./rateLimit.js";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -106,7 +107,9 @@ app.post("/v1/tasks", async (req, res) => {
 });
 
 // POST /v1/tasks/:task_id/review — submit a review
-app.post("/v1/tasks/:task_id/review", async (req, res) => {
+// Rate-limited (see rateLimit.ts): the handler performs auth + repeated DB
+// writes, and CodeQL js/missing-rate-limiting flags it without a throttle.
+app.post("/v1/tasks/:task_id/review", reviewRateLimiter, async (req, res) => {
   if (!checkAuth(req)) {
     return res.status(403).json({
       code: "forbidden",
