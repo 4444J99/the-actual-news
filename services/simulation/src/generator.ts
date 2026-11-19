@@ -1,12 +1,5 @@
-import crypto from 'node:crypto';
 import { query } from './db.js';
-
-function ulid(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    crypto.randomBytes(10).toString("hex").toUpperCase()
-  ).slice(0, 26);
-}
+import { newId } from "shared";
 
 export class PersonaGenerator {
   static async generatePersonas(count: number, storyContext: string) {
@@ -23,8 +16,8 @@ export class PersonaGenerator {
       const alignment = alignments[Math.floor(Math.random() * alignments.length)];
       const trait = traits[Math.floor(Math.random() * traits.length)];
       personas.push({
-        persona_id: ulid(),
-        handle: `user_${ulid().slice(0, 6).toLowerCase()}`,
+        persona_id: newId(),
+        handle: `user_${newId().slice(0, 6).toLowerCase()}`,
         traits: { alignment, personality: trait },
         created_at: new Date().toISOString()
       });
@@ -41,7 +34,7 @@ export class LLMPromptBuilder {
     // Story: ${bodyMarkdown}"
     
     return {
-      turn_id: ulid(),
+      turn_id: newId(),
       persona_id: persona.persona_id,
       content: `I am feeling very ${persona.traits.personality} about this. From a ${persona.traits.alignment} perspective, this news is significant.`,
       referenced_claim_ids: []
@@ -55,7 +48,7 @@ export async function generateInitialPersonasAndTurns(storyId: string, bodyMarkd
   let threadId = threadRes.rows[0]?.thread_id;
   
   if (!threadId) {
-    threadId = ulid();
+    threadId = newId();
     await query(`
       INSERT INTO sim_threads (thread_id, story_id, platform_id, status)
       VALUES ($1, $2, $3, 'active')

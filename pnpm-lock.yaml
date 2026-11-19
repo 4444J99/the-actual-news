@@ -72,6 +72,9 @@ importers:
       pg:
         specifier: ^8.21.0
         version: 8.21.0
+      shared:
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -100,6 +103,9 @@ importers:
       pg:
         specifier: ^8.21.0
         version: 8.21.0
+      shared:
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -131,6 +137,9 @@ importers:
       pg:
         specifier: ^8.21.0
         version: 8.21.0
+      shared:
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -165,6 +174,9 @@ importers:
       rss-parser:
         specifier: ^3.13.0
         version: 3.13.0
+      shared:
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -185,6 +197,22 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(vite@7.3.1(@types/node@25.9.3)(terser@5.16.9)(yaml@2.9.0))
 
+  services/shared:
+    dependencies:
+      ulid:
+        specifier: ^3.0.2
+        version: 3.0.2
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.3
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(vite@7.3.1(@types/node@25.9.3)(terser@5.16.9)(yaml@2.9.0))
+
   services/simulation:
     dependencies:
       express:
@@ -193,6 +221,9 @@ importers:
       pg:
         specifier: ^8.11.3
         version: 8.21.0
+      shared:
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -221,6 +252,9 @@ importers:
       pg:
         specifier: ^8.21.0
         version: 8.21.0
+      shared:
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -252,6 +286,9 @@ importers:
       pg:
         specifier: ^8.21.0
         version: 8.21.0
+      shared:
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@types/express':
         specifier: ^5.0.6

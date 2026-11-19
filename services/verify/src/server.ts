@@ -1,8 +1,8 @@
 import express from "express";
-import crypto from "node:crypto";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
 import { reviewRateLimiter } from "./rateLimit.js";
+import { newId } from "shared";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -19,13 +19,6 @@ function checkAuth(req: any): boolean {
 type TaskStatus = "open" | "in_progress" | "resolved";
 type TaskType = "evidence_gap" | "corroboration" | "contradiction" | "coi_check";
 type Verdict = "supports" | "contradicts" | "context_only" | "cannot_determine";
-
-function ulid(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    crypto.randomBytes(10).toString("hex").toUpperCase()
-  ).slice(0, 26);
-}
 
 export const app = express();
 app.use(express.json());
@@ -78,7 +71,7 @@ app.post("/v1/tasks", async (req, res) => {
     });
   }
 
-  const task_id = ulid();
+  const task_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -165,7 +158,7 @@ app.post("/v1/tasks/:task_id/review", reviewRateLimiter, async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    const review_id = ulid();
+    const review_id = newId();
 
     await pool.query(
       `INSERT INTO reviews (review_id, task_id, actor_id, verdict, notes, evidence_edges, created_at)
@@ -239,7 +232,7 @@ app.post("/v1/tasks/:task_id/review", reviewRateLimiter, async (req, res) => {
                  WHERE EXISTS (SELECT 1 FROM evidence_objects WHERE evidence_id_hash = $3)
                  ON CONFLICT (edge_id) DO NOTHING`,
                 [
-                  ulid(),
+                  newId(),
                   claimId,
                   String(edge.evidence_id_hash),
                   Number(edge.strength ?? 0.5),

@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "express": "^5.2.1",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "shared": "workspace:*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

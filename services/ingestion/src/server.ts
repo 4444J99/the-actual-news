@@ -1,19 +1,12 @@
 import express from "express";
-import crypto from "node:crypto";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
 import { runIngestion } from "./pipeline.js";
+import { newId } from "shared";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
 const PORT = Number(process.env.INGESTION_PORT ?? DEFAULT_PORT);
-
-function ulid(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    crypto.randomBytes(10).toString("hex").toUpperCase()
-  ).slice(0, 26);
-}
 
 export const app = express();
 app.use(express.json());
@@ -44,7 +37,7 @@ app.post("/v1/sources", async (req, res) => {
     return res.status(400).json({ code: "bad_request", message: "name and feed_url are required" });
   }
 
-  const source_id = ulid();
+  const source_id = newId();
   const now = new Date().toISOString();
 
   try {

@@ -208,7 +208,7 @@ See `docs/public-launch-checklist.md` for the public launch gate.
 ## Conformance Tests
 
 The `tools/conformance/` directory contains protocol conformance tests with
-pre-built fixtures (CT-01 through CT-07). Run them with:
+pre-built fixtures (CT-01 through CT-13, plus the CT-BUNDLE-01 bundle replay). Run them with:
 
 ```bash
 export PATH="/opt/homebrew/opt/libpq/bin:/opt/homebrew/opt/postgresql@16/bin:$PATH"
@@ -222,6 +222,36 @@ pnpm conformance:test
 
 `tools/migrate.sh` needs the `psql` client on PATH and fails early with the same install guidance as `pnpm conformance:doctor`. On macOS with Homebrew, either `libpq` or `postgresql@16` provides it.
 The conformance harness itself uses the Node `pg` driver, creates isolated temporary schemas from its own fixture schema, and does not require Docker. Migrations are still required when you are validating the application ledger schema rather than only the conformance fixtures.
+
+CT-11 and CT-12 encode the ingestion identity invariants (no duplicate
+captures/stories/claims on a double ingest; no partial rows and a failed
+run status on a mid-ingest crash) as fixture data; the live proof that the
+pipeline produces that state is
+`services/ingestion/src/__tests__/identity.test.ts`. CT-13 is live: the
+harness runs `tools/restore-demo.mjs`, which ingests a fixed feed, dumps
+the database, restores it into a fresh database on a different blob path,
+re-runs finalize verification there, and requires every identity-bearing
+row to be identical.
+
+## Evidence blob store
+
+Ingestion writes one blob per captured article and records it as
+`blob://local/<sha256-hex>`, where `<hex>` is the article content hash
+without the `sha256:` prefix; the blob file on disk is `<hex>.blob` in the
+blob store directory, and `evidence_id_hash` keeps the `sha256:` prefix.
+The URI and the filename name the same hash, so a blob resolves after the
+store moves or the database is restored elsewhere.
+
+`EVIDENCE_BLOB_STORE_DIR` is **required** for ingestion: the service
+fails fast at startup when it is unset (there is no default path — an
+earlier `/Volumes/Archive4T/...` default silently wrote blobs to a
+machine-specific location). The evidence service keeps its own tmpdir
+default; only ingestion requires the variable. Point it at a directory
+the service can create and write, e.g.:
+
+```bash
+export EVIDENCE_BLOB_STORE_DIR="$PWD/.data/blobs"
+```
 
 ## Teardown
 

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
+import { newId, hashHex } from "shared";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -29,13 +30,6 @@ type EvidenceObject = {
   provenance: Record<string, unknown>;
   created_at: string;
 };
-
-function ulid(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    crypto.randomBytes(10).toString("hex").toUpperCase()
-  ).slice(0, 26);
-}
 
 function sha256Buffer(buf: Buffer): string {
   return "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
@@ -69,7 +63,10 @@ app.post("/v1/evidence/upload", async (req, res) => {
   // Write bytes to blob store
   fs.writeFileSync(blobPath, buf);
 
-  const blob_uri = `blob://local/${evidence_id_hash}`;
+  // Blob URIs and blob filenames share one form (the-actual-news#111):
+  // blob://local/<hex> names the file <hex>.blob. The evidence_id_hash
+  // itself keeps the sha256: prefix — only the URI drops it.
+  const blob_uri = `blob://local/${hashHex(evidence_id_hash)}`;
   const now = new Date().toISOString();
 
   if (!provenance.source || !provenance.collected_at) {
@@ -150,7 +147,7 @@ app.post("/v1/evidence/presign", (req, res) => {
     });
   }
 
-  const blob_uri = `blob://${env.PLATFORM_ID}/${ulid()}/${filename}`;
+  const blob_uri = `blob://${env.PLATFORM_ID}/${newId()}/${filename}`;
   const upload_url = `http://localhost:${PORT}/v1/evidence/upload`;
 
   return res.status(200).json({ upload_url, blob_uri });
@@ -176,9 +173,11 @@ app.post("/v1/evidence", async (req, res) => {
 
   const pid = platform_id ?? env.PLATFORM_ID;
   // Derive identity from embedded content hash when available (e.g. uploaded blobs),
-  // otherwise fall back to hashing the URI for URL-based evidence.
-  const embedded = String(blob_uri).match(/sha256:[a-f0-9]{64}/);
-  const evidence_id_hash = embedded ? embedded[0] : sha256Buffer(Buffer.from(blob_uri, "utf8"));
+  // otherwise fall back to hashing the URI for URL-based evidence. The hash
+  // may arrive as sha256:<hex> or as a bare <hex> (the blob://local/ form
+  // strips the prefix); normalize to sha256:<hex> either way.
+  const embedded = String(blob_uri).match(/(?:sha256:)?([a-f0-9]{64})/);
+  const evidence_id_hash = embedded ? `sha256:${embedded[1]}` : sha256Buffer(Buffer.from(blob_uri, "utf8"));
   const now = new Date().toISOString();
 
   try {

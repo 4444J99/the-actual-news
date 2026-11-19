@@ -202,7 +202,7 @@ describe("POST /v1/federation/sync (#110)", () => {
       const res = await fetch("/v1/federation/sync", { method: "POST", body: { peer_id: peerId } });
       expect(res.status).toBe(202);
       const body = await res.json();
-      expect(body.job_id).toMatch(/^[A-Z0-9]{10,26}$/); // ulidLike(): 10-char time prefix + random tail
+      expect(body.job_id).toMatch(/^[A-Z0-9]{10,26}$/); // newId(): 26-char ULID
       expect(body.status).toBe("pending");
       expect(body).not.toHaveProperty("sync_initiated");
       expect(JSON.stringify(body)).not.toContain("sync_initiated");
