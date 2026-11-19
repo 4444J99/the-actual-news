@@ -2,6 +2,7 @@ import express from "express";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
 import { newId, contentHash } from "shared";
+import { extractRateLimiter } from "./rateLimit.js";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -35,7 +36,10 @@ app.get("/v1/health", (_req, res) => {
 });
 
 // POST /v1/extract — start claim extraction
-app.post("/v1/extract", async (req, res) => {
+// Rate-limited (see rateLimit.ts): the handler performs repeated DB writes
+// (one claim insert per sentence), and CodeQL js/missing-rate-limiting
+// flags it without a throttle.
+app.post("/v1/extract", extractRateLimiter, async (req, res) => {
   const { platform_id, story_id, story_version_id, body_markdown, model_policy } = req.body ?? {};
 
   if (!story_id || !story_version_id || !body_markdown) {

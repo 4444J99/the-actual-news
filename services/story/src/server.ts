@@ -2,6 +2,7 @@ import express from "express";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
 import { newId } from "shared";
+import { storyCreateRateLimiter } from "./rateLimit.js";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -33,7 +34,10 @@ app.get("/v1/health", (_req, res) => {
 });
 
 // POST /v1/stories — create a story
-app.post("/v1/stories", async (req, res) => {
+// Rate-limited (see rateLimit.ts): the handler performs DB writes (story +
+// initial version), and CodeQL js/missing-rate-limiting flags it without
+// a throttle.
+app.post("/v1/stories", storyCreateRateLimiter, async (req, res) => {
   const { title, initial_body_markdown } = req.body ?? {};
 
   if (!title || typeof title !== "string") {
