@@ -36,7 +36,11 @@ function extractEntities(text: string): string[] {
     .slice(0, 5);
 }
 
-export async function runIngestion(pool: Pool, platformId: string): Promise<IngestResult> {
+export async function runIngestion(
+  pool: Pool,
+  platformId: string,
+  fetchFeedFn: typeof fetchFeed = fetchFeed
+): Promise<IngestResult> {
   const result: IngestResult = {
     sources_processed: 0,
     articles_found: 0,
@@ -67,7 +71,7 @@ export async function runIngestion(pool: Pool, platformId: string): Promise<Inge
     for (const source of sourcesQ.rows) {
       result.sources_processed++;
       try {
-        const articles = await fetchFeed(source.feed_url);
+        const articles = await fetchFeedFn(source.feed_url);
         result.articles_found += articles.length;
 
         for (const article of articles) {
@@ -175,10 +179,14 @@ export async function runIngestion(pool: Pool, platformId: string): Promise<Inge
             );
             result.claims_extracted++;
 
-            // Create claim-evidence edge
+            // Record acquisition provenance: this claim was extracted from
+            // this evidence. Relation 'origin' on purpose (#112) — the
+            // article's own text is provenance, not editorial support, so
+            // it must never be written as 'supports'; strength is
+            // meaningless for a provenance edge.
             await pool.query(
               `INSERT INTO claim_evidence_edges (edge_id, claim_id, evidence_id_hash, relation, strength, created_at)
-               VALUES ($1, $2, $3, 'supports', 0.5, $4)`,
+               VALUES ($1, $2, $3, 'origin', 0, $4)`,
               [ulid(), claimId, evidenceId, now]
             );
           }

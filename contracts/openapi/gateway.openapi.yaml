@@ -76,7 +76,7 @@ paths:
                       properties:
                         claim_id: { $ref: "common.openapi.yaml#/components/schemas/Ulid" }
                         evidence_id_hash: { type: string }
-                        relation: { type: string, enum: [supports, contradicts, context] }
+                        relation: { type: string, enum: [supports, contradicts, context, origin] }
                         strength: { type: number, minimum: 0, maximum: 1 }
                   corrections:
                     type: array
