@@ -6,6 +6,7 @@ import {
   runFederationSyncJob as runFederationJob,
   startFederationWorker
 } from "./federation.js";
+import { federationRateLimiter } from "./rateLimit.js";
 
 type Story = {
   story_id: string;
@@ -1070,6 +1071,9 @@ app.post("/v1/federation/peers", async (req, res) => {
 
 // POST /v1/federation/sync — enqueue a sync job for a peer.
 //
+// Rate-limited (see rateLimit.ts): the handler performs repeated DB writes,
+// so one caller must not be able to flood job creation.
+//
 // the-actual-news#110: this used to be a stub — it advanced last_synced_at
 // and returned `sync_initiated` without fetching anything, so the cursor
 // lied about what was received. It now enqueues a durable job and returns
@@ -1079,7 +1083,7 @@ app.post("/v1/federation/peers", async (req, res) => {
 // worker), never here. Re-POSTing while a job for the peer is pending or
 // running returns that job instead of duplicating it; after a failure,
 // re-POST creates a fresh job (a retry).
-app.post("/v1/federation/sync", async (req, res) => {
+app.post("/v1/federation/sync", federationRateLimiter, async (req, res) => {
   const { peer_id } = req.body ?? {};
   if (!peer_id) {
     return res.status(400).json({ code: "bad_request", message: "peer_id is required" });
@@ -1124,8 +1128,9 @@ app.post("/v1/federation/sync", async (req, res) => {
 
 // GET /v1/federation/jobs/:job_id — inspect a sync job (state, attempts,
 // last_error). This is how a caller learns the outcome of the 202 above:
-// poll until state is done or failed.
-app.get("/v1/federation/jobs/:job_id", async (req, res) => {
+// poll until state is done or failed. Rate-limited with the sync endpoint
+// (see rateLimit.ts): the handler reads the DB on every poll.
+app.get("/v1/federation/jobs/:job_id", federationRateLimiter, async (req, res) => {
   try {
     const q = await pool.query(
       `SELECT job_id, peer_id, state, attempts, last_error, created_at, updated_at
