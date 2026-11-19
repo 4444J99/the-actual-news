@@ -25,6 +25,9 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
+  // claim_evidence_edges reference evidence_objects, so delete edges first;
+  // other suites' runs leave edges behind in the shared test database.
+  await pool.query("DELETE FROM claim_evidence_edges");
   await pool.query("DELETE FROM evidence_objects");
   await new Promise<void>((resolve) => {
     server = app.listen(0, () => resolve());

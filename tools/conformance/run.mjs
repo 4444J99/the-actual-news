@@ -31,7 +31,9 @@ const FIXTURE_FILES = [
   "CT-05.json",
   "CT-06.json",
   "CT-07.json",
-  "CT-08.json"
+  "CT-08.json",
+  "CT-09.json",
+  "CT-10.json"
 ];
 
 const BUNDLE_FIXTURE_DIR = path.join(ROOT, "fixtures", "civic-record-node");

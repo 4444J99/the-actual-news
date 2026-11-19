@@ -2,6 +2,7 @@ import express from "express";
 import crypto from "node:crypto";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
+import { reviewRateLimiter } from "./rateLimit.js";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -106,7 +107,9 @@ app.post("/v1/tasks", async (req, res) => {
 });
 
 // POST /v1/tasks/:task_id/review — submit a review
-app.post("/v1/tasks/:task_id/review", async (req, res) => {
+// Rate-limited (see rateLimit.ts): the handler performs auth + repeated DB
+// writes, and CodeQL js/missing-rate-limiting flags it without a throttle.
+app.post("/v1/tasks/:task_id/review", reviewRateLimiter, async (req, res) => {
   if (!checkAuth(req)) {
     return res.status(403).json({
       code: "forbidden",
@@ -207,6 +210,48 @@ app.post("/v1/tasks/:task_id/review", async (req, res) => {
          WHERE claim_id = (SELECT claim_id FROM verification_tasks WHERE task_id = $1)`,
         [req.params.task_id]
       );
+
+      // #112: a quorum 'supports' verdict is the only legitimate source of
+      // 'supports' edges — ingestion writes 'origin' now, so without this
+      // the gate could never count a claim as primary-supported. Once
+      // quorum is reached, record every accepted 'supports' review's cited
+      // 'supports' edges as review-attested claim_evidence_edges rows
+      // (reviewer_actor_id + notes carried over). Citations of evidence
+      // the local ledger does not hold are skipped, never invented.
+      if (reviewerCount >= minQuorum) {
+        const acceptedQ = await pool.query(
+          `SELECT actor_id, notes, evidence_edges FROM reviews WHERE task_id = $1 AND verdict = 'supports'`,
+          [req.params.task_id]
+        );
+        const claimQ = await pool.query(
+          `SELECT claim_id FROM verification_tasks WHERE task_id = $1`,
+          [req.params.task_id]
+        );
+        const claimId = claimQ.rows[0]?.claim_id;
+        if (claimId) {
+          for (const review of acceptedQ.rows) {
+            const cited = Array.isArray(review.evidence_edges) ? review.evidence_edges : [];
+            for (const edge of cited) {
+              if (!edge || edge.relation !== "supports" || !edge.evidence_id_hash) continue;
+              await pool.query(
+                `INSERT INTO claim_evidence_edges (edge_id, claim_id, evidence_id_hash, relation, strength, reviewer_actor_id, notes, created_at)
+                 SELECT $1, $2, $3, 'supports', $4, $5, $6, $7
+                 WHERE EXISTS (SELECT 1 FROM evidence_objects WHERE evidence_id_hash = $3)
+                 ON CONFLICT (edge_id) DO NOTHING`,
+                [
+                  ulid(),
+                  claimId,
+                  String(edge.evidence_id_hash),
+                  Number(edge.strength ?? 0.5),
+                  review.actor_id,
+                  review.notes ?? notes,
+                  now,
+                ]
+              );
+            }
+          }
+        }
+      }
     }
 
     return res.status(201).json({

@@ -25,7 +25,13 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
+  // Delete in FK order: reviews/verification_tasks reference claims, and
+  // claim_evidence_edges reference claims too. Other suites leave those
+  // rows behind in the shared test database, so every suite must clean
+  // them before deleting claims.
   await pool.query("DELETE FROM claim_evidence_edges");
+  await pool.query("DELETE FROM reviews");
+  await pool.query("DELETE FROM verification_tasks");
   await pool.query("DELETE FROM claims");
   await pool.query("DELETE FROM story_versions");
   await pool.query("DELETE FROM stories");

@@ -209,7 +209,7 @@ Evidence MUST include `provenance.source_class` when feasible.
   "edge_id": "01J...",
   "claim_id": "01J...",
   "evidence_id_hash": "sha256:...",
-  "relation": "supports|contradicts|context",
+  "relation": "supports|contradicts|context|origin",
   "strength": 0.0,
   "reviewer_actor_id": "01J...|null",
   "notes": "string|null",
@@ -299,6 +299,16 @@ Evidence is primary iff:
 
 Absent `source_class` MUST be treated as non-primary.
 
+### 4.2a Origin edges and independent support
+
+Source acquisition and editorial support are distinct relations and MUST NOT be conflated:
+
+- When a claim is extracted from a captured article, ingestion MUST record that provenance with relation `origin` (never `supports`). An `origin` edge says only "this claim was taken from this evidence"; it carries no support strength and MUST NOT count toward any support metric.
+- A `supports` edge counts toward primary-supported (and toward high-impact corroboration) only when its evidence is **independent of the claim's origin**: the edge's evidence is not the evidence object the claim was extracted from (`evidence_id_hash` differs from every `origin` edge's evidence for that claim) AND its `independence_key` differs from the origin evidence's `independence_key`. A `supports` edge pointing at the claim's own origin evidence — or at other evidence from the same publisher — is self-support and MUST NOT count. The claim's origin evidence is the target of its `origin` edges; for legacy data written before `origin` existed, it is any evidence whose `extracted_text` contains the claim's own text (ingestion extracts claims as sentences of the article stored there), the same criterion migration `008_origin_edges.sql` uses to re-label self-edges. A claim with neither has no known origin, so its `supports` edges are evaluated on their own terms.
+- Only review-attested `supports` edges (written by the verify service on a quorum `supports` verdict, carrying `reviewer_actor_id`) are legitimate sources of primary support. Ingestion MUST NOT write `supports` edges.
+
+*Why:* the publisher's class is a property of acquisition, not of endorsement. Without this rule a story ingested from a single primary-class publisher scores `primary_evidence_ratio = 1.0` with zero independent evidence, and the ratio leg measures "did the claims come from a primary-class source" instead of editorial support.
+
 ### 4.3 High-impact claim detection
 
 A claim `C` is high-impact iff:
@@ -313,7 +323,9 @@ For a given `(story_id, story_version_id)`:
 
 Let `Claims = { C | C.story_id=story_id AND C.story_version_id=story_version_id }`
 
-Let `Edges(C) = { e | e.claim_id=C.claim_id AND e.relation='supports' }`
+Let `Origin(C) = { e | e.claim_id=C.claim_id AND e.relation='origin' }`
+
+Let `Edges(C) = { e | e.claim_id=C.claim_id AND e.relation='supports' AND e is independent of C's origin per §4.2a }`
 
 Let `PrimarySupportedClaims = { C | ∃e∈Edges(C): Evidence(e).is_primary=true }`
 
@@ -448,6 +460,20 @@ High-impact claim supported by evidence with missing `provenance.source_class`.
 Expected:
 Primary evidence ratio computed without counting that evidence as primary; gate likely fails if ratio depends on it.
 
+#### `CT-09` single-publisher story must not self-approve
+
+One story version ingested from a single `primary_record` publisher. Every claim's only evidence is the article it was extracted from: one claim carries the old-world shape (a `supports` edge pointing at its own origin evidence, no reviewer), the other carries the new-world shape (an `origin` edge only). A third edge — a review-attested `supports` edge from one claim to a *different article from the same publisher* — is also present, to prove the publisher-level rule. Both claims stay `support_status='unsupported'`.
+
+Expected:
+`primary_supported_claims=0`, `primary_evidence_ratio=0`, `unsupported_claim_share=1.0`, `pass=false`. The gate MUST NOT count self-support under either shape, nor same-publisher support.
+
+#### `CT-10` independently corroborated story passes
+
+The same story as CT-09, plus one independent primary corroboration per claim: a review-attested `supports` edge (carrying `reviewer_actor_id`) to primary evidence from a different publisher, with the `origin` edges and the same-publisher trap edge left in place. Review has flipped both claims to `partially_supported`.
+
+Expected:
+`primary_supported_claims=2`, `primary_evidence_ratio=1.0`, `unsupported_claim_share=0.0`, `pass=true`. The `origin` edges MUST NOT subtract from the ratio, and the same-publisher evidence MUST NOT have counted.
+
 ### 5.3 Output normalization rules
 
 Conformance outputs MUST normalize:
@@ -462,7 +488,7 @@ C. ratios compared as exact decimals in fixtures; implementations SHOULD compute
 An implementation MAY claim compliance with `$CORE_PROTOCOL_SPEC_V1` only if:
 A. It enforces invariants I1–I10,
 B. It implements algorithms 4.1–4.6, and
-C. It passes all required conformance tests CT-01..CT-07 under at least one policy pack version.
+C. It passes all required conformance tests CT-01..CT-10 under at least one policy pack version.
 
 * * *
 
