@@ -2,6 +2,11 @@ import express from "express";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
 import { hashCanonical, merkleLeafHash, merkleProof, merkleRoot } from "./transparency.js";
+import {
+  runFederationSyncJob as runFederationJob,
+  startFederationWorker
+} from "./federation.js";
+import { federationRateLimiter } from "./rateLimit.js";
 
 type Story = {
   story_id: string;
@@ -1064,8 +1069,21 @@ app.post("/v1/federation/peers", async (req, res) => {
   }
 });
 
-// POST /v1/federation/sync — pull new published stories from a peer
-app.post("/v1/federation/sync", async (req, res) => {
+// POST /v1/federation/sync — enqueue a sync job for a peer.
+//
+// Rate-limited (see rateLimit.ts): the handler performs repeated DB writes,
+// so one caller must not be able to flood job creation.
+//
+// the-actual-news#110: this used to be a stub — it advanced last_synced_at
+// and returned `sync_initiated` without fetching anything, so the cursor
+// lied about what was received. It now enqueues a durable job and returns
+// 202; the worker (services/gateway/src/federation.ts) fetches the peer's
+// /v1/feed + /v1/story bundles, verifies each bundle_hash, and lands them.
+// last_synced_at advances only after a batch actually commits (in the
+// worker), never here. Re-POSTing while a job for the peer is pending or
+// running returns that job instead of duplicating it; after a failure,
+// re-POST creates a fresh job (a retry).
+app.post("/v1/federation/sync", federationRateLimiter, async (req, res) => {
   const { peer_id } = req.body ?? {};
   if (!peer_id) {
     return res.status(400).json({ code: "bad_request", message: "peer_id is required" });
@@ -1081,21 +1099,50 @@ app.post("/v1/federation/sync", async (req, res) => {
       return res.status(404).json({ code: "not_found", message: "peer not found" });
     }
 
-    // In a full implementation, this would fetch from the peer's /v1/feed and /v1/story/:id endpoints.
-    // For now, record the sync attempt and return status.
-    const now = new Date().toISOString();
+    const existing = await pool.query(
+      `SELECT job_id, state FROM federation_sync_jobs
+       WHERE peer_id = $1 AND platform_id = $2 AND state IN ('pending', 'running')
+       ORDER BY created_at DESC LIMIT 1`,
+      [peer_id, env.PLATFORM_ID]
+    );
+    if ((existing.rowCount ?? 0) > 0) {
+      return res.status(202).json({
+        job_id: existing.rows[0].job_id,
+        peer_id,
+        status: existing.rows[0].state
+      });
+    }
+
+    const jobId = ulidLike();
     await pool.query(
-      `UPDATE federation_peers SET last_synced_at = $1 WHERE peer_id = $2`,
-      [now, peer_id]
+      `INSERT INTO federation_sync_jobs (job_id, platform_id, peer_id, state)
+       VALUES ($1, $2, $3, 'pending')`,
+      [jobId, env.PLATFORM_ID, peer_id]
     );
 
-    await pool.query(
-      `INSERT INTO audit_log (audit_id, platform_id, action_type, resource_type, resource_id, details, created_at)
-       VALUES ($1, $2, 'federation_sync', 'peer', $3, $4::jsonb, $5)`,
-      [ulidLike(), env.PLATFORM_ID, peer_id, JSON.stringify({ synced_at: now }), now]
+    return res.status(202).json({ job_id: jobId, peer_id, status: "pending" });
+  } catch (err: any) {
+    return res.status(500).json({ code: "internal_error", message: "unexpected server error", details: { error: String(err?.message ?? err) } });
+  }
+});
+
+// GET /v1/federation/jobs/:job_id — inspect a sync job (state, attempts,
+// last_error). This is how a caller learns the outcome of the 202 above:
+// poll until state is done or failed. Rate-limited with the sync endpoint
+// (see rateLimit.ts): the handler reads the DB on every poll.
+app.get("/v1/federation/jobs/:job_id", federationRateLimiter, async (req, res) => {
+  try {
+    const q = await pool.query(
+      `SELECT job_id, peer_id, state, attempts, last_error, created_at, updated_at
+       FROM federation_sync_jobs WHERE job_id = $1 AND platform_id = $2`,
+      [req.params.job_id, env.PLATFORM_ID]
     );
 
-    return res.status(200).json({ peer_id, synced_at: now, status: "sync_initiated" });
+    if (q.rowCount === 0) {
+      return res.status(404).json({ code: "not_found", message: "sync job not found" });
+    }
+
+    return res.status(200).json(q.rows[0]);
   } catch (err: any) {
     return res.status(500).json({ code: "internal_error", message: "unexpected server error", details: { error: String(err?.message ?? err) } });
   }
@@ -2001,10 +2048,17 @@ app.get("/v1/corrections/:claim_id", async (req, res) => {
 
 export { app, pool };
 
+// Test seam: run one federation sync job to completion (see
+// services/gateway/src/federation.ts). Tests drive jobs deterministically
+// through this instead of the background worker.
+export const runFederationSyncJob = (jobId: string) =>
+  runFederationJob(pool, env.PLATFORM_ID, jobId);
+
 // Mirror services/verify/src/server.ts: tests import { app } and listen on
 // an ephemeral port themselves, so the module must not bind DEFAULT_PORT
 // when NODE_ENV=test.
 if (process.env.NODE_ENV !== "test") {
+  startFederationWorker(pool, env.PLATFORM_ID);
   const server = app.listen(DEFAULT_PORT, () => {
     console.log(
       JSON.stringify(
