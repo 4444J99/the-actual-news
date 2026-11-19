@@ -28,10 +28,13 @@ function fetch(path: string, opts: { method?: string; body?: unknown } = {}): Pr
 }
 
 beforeEach(async () => {
-  // claim_evidence_edges reference claims (FK claim_evidence_edges_claim_id_fkey),
-  // claims reference story_versions, and story_versions reference stories, so
-  // teardown must delete in dependency order: edges -> claims -> versions -> stories.
+  // verification_tasks reference claims (FK verification_tasks_claim_id_fkey)
+  // and reviews reference tasks, so delete those first: the gateway suite
+  // runs before story in `pnpm test:services` and its last test leaves
+  // verification_tasks rows behind in the shared test database.
   await pool.query("DELETE FROM claim_evidence_edges");
+  await pool.query("DELETE FROM reviews");
+  await pool.query("DELETE FROM verification_tasks");
   await pool.query("DELETE FROM claims");
   await pool.query("DELETE FROM story_versions");
   await pool.query("DELETE FROM stories");
