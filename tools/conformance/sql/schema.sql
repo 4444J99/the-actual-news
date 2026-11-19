@@ -51,6 +51,7 @@ CREATE TABLE claims (
   story_version_id TEXT NOT NULL,
   claim_type TEXT NOT NULL,
   text TEXT NOT NULL,
+  text_hash TEXT,
   entities JSONB NOT NULL DEFAULT '[]'::jsonb,
   time_window JSONB NOT NULL DEFAULT '{}'::jsonb,
   jurisdiction TEXT,
@@ -127,6 +128,43 @@ CREATE TABLE reviews (
   verdict TEXT NOT NULL,
   notes TEXT,
   evidence_edges JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Ingestion identity tables (the-actual-news#111, CT-11/CT-12). Mirrors
+-- db/migrations/005_sources.sql + 010_identity_stability.sql, minus the
+-- sources FK (the conformance schema is self-contained). The uniqueness
+-- constraints live in migration 010; the fixtures below encode the
+-- post-fix state and the runner asserts the invariants in SQL.
+CREATE TABLE ingest_runs (
+  run_id TEXT PRIMARY KEY,
+  platform_id TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  failed_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'running',
+  sources_processed INTEGER NOT NULL DEFAULT 0,
+  articles_found INTEGER NOT NULL DEFAULT 0,
+  articles_new INTEGER NOT NULL DEFAULT 0,
+  claims_extracted INTEGER NOT NULL DEFAULT 0,
+  errors TEXT,
+  finalize_ok BOOLEAN,
+  finalize_checked_at TIMESTAMPTZ,
+  finalize_errors TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE source_captures (
+  capture_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  platform_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  content_hash TEXT NOT NULL,
+  blob_uri TEXT,
+  status TEXT NOT NULL DEFAULT 'success',
+  error TEXT,
+  run_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

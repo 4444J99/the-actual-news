@@ -1,7 +1,8 @@
 import express from "express";
-import crypto from "node:crypto";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
+import { newId } from "shared";
+import { storyCreateRateLimiter } from "./rateLimit.js";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -25,13 +26,6 @@ type StoryVersion = {
   created_at: string;
 };
 
-function ulid(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    crypto.randomBytes(10).toString("hex").toUpperCase()
-  ).slice(0, 26);
-}
-
 export const app = express();
 app.use(express.json());
 
@@ -40,7 +34,10 @@ app.get("/v1/health", (_req, res) => {
 });
 
 // POST /v1/stories — create a story
-app.post("/v1/stories", async (req, res) => {
+// Rate-limited (see rateLimit.ts): the handler performs DB writes (story +
+// initial version), and CodeQL js/missing-rate-limiting flags it without
+// a throttle.
+app.post("/v1/stories", storyCreateRateLimiter, async (req, res) => {
   const { title, initial_body_markdown } = req.body ?? {};
 
   if (!title || typeof title !== "string") {
@@ -48,22 +45,38 @@ app.post("/v1/stories", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  const story_id = ulid();
+  const story_id = newId();
 
   try {
-    await pool.query(
-      `INSERT INTO stories (story_id, platform_id, title, state, created_at, updated_at)
-       VALUES ($1, $2, $3, 'draft', $4, $4)`,
-      [story_id, env.PLATFORM_ID, title, now]
-    );
-
-    if (initial_body_markdown && typeof initial_body_markdown === "string") {
-      const version_id = ulid();
-      await pool.query(
-        `INSERT INTO story_versions (story_version_id, story_id, body_markdown, created_at)
-         VALUES ($1, $2, $3, $4)`,
-        [version_id, story_id, initial_body_markdown, now]
+    // One transaction for story + initial version: a crash between the two
+    // inserts must not leave a story with no version.
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO stories (story_id, platform_id, title, state, created_at, updated_at)
+         VALUES ($1, $2, $3, 'draft', $4, $4)`,
+        [story_id, env.PLATFORM_ID, title, now]
       );
+
+      if (initial_body_markdown && typeof initial_body_markdown === "string") {
+        const version_id = newId();
+        await client.query(
+          `INSERT INTO story_versions (story_version_id, story_id, body_markdown, created_at)
+           VALUES ($1, $2, $3, $4)`,
+          [version_id, story_id, initial_body_markdown, now]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Best-effort; the connection may already be dead.
+      }
+      throw err;
+    } finally {
+      client.release();
     }
 
     return res.status(201).json({
@@ -168,7 +181,7 @@ app.post("/v1/stories/:story_id/versions", async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    const version_id = ulid();
+    const version_id = newId();
 
     await pool.query(
       `INSERT INTO story_versions (story_version_id, story_id, body_markdown, disclosure_markdown, created_at)

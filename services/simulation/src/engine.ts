@@ -1,13 +1,6 @@
 import { query } from './db.js';
 import { LLMPromptBuilder } from './generator.js';
-import crypto from 'node:crypto';
-
-function ulid(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    crypto.randomBytes(10).toString("hex").toUpperCase()
-  ).slice(0, 26);
-}
+import { newId } from "shared";
 
 export class SimulationEngine {
   async tick() {
@@ -50,14 +43,14 @@ export class SimulationEngine {
       `, [thread.thread_id]);
 
       // T015: Clone and Mutate
-      const newThreadId = ulid();
+      const newThreadId = newId();
       await query(`
         INSERT INTO sim_threads (thread_id, story_id, platform_id, status)
         VALUES ($1, $2, $3, 'active')
       `, [newThreadId, thread.story_id, process.env.PLATFORM_ID ?? 'unknown']);
 
       for (const p of personasRes.rows) {
-        const mutatedPersonaId = ulid();
+        const mutatedPersonaId = newId();
         const mutatedTraits = { ...p.traits, generation: (p.traits.generation || 1) + 1 };
         
         await query(`
@@ -68,7 +61,7 @@ export class SimulationEngine {
         await query(`
           INSERT INTO sim_conversational_turns (turn_id, thread_id, persona_id, parent_turn_id, content, referenced_claim_ids)
           VALUES ($1, $2, $3, NULL, $4, $5)
-        `, [ulid(), newThreadId, mutatedPersonaId, 'I am carrying this conversation over.', '[]']);
+        `, [newId(), newThreadId, mutatedPersonaId, 'I am carrying this conversation over.', '[]']);
       }
 
       // Close the old thread
@@ -127,7 +120,7 @@ export class SimulationEngine {
     // Mock generation
     const parentTurn = recentContext[0]; // Respond to the most recent message
     return {
-      turn_id: ulid(),
+      turn_id: newId(),
       persona_id: persona.persona_id,
       parent_turn_id: parentTurn.turn_id,
       content: `@${parentTurn.handle} I disagree with that entirely. My ${persona.traits.personality} approach leads me to think otherwise.`,

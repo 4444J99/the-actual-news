@@ -19,7 +19,7 @@
 // * bundle_hash is the only integrity check the repo defines, so a bundle
 //   whose recomputed hash mismatches is rejected and the job fails closed.
 // * A remote story_id must never collide with a local stories PK: the
-//   local id is the remote id when it is free, otherwise a fresh ulidLike
+//   local id is the remote id when it is free, otherwise a fresh newId
 //   id, and federated_stories records the mapping either way. The same
 //   rule applies to version / claim / correction ids inside the bundle.
 // * claim_evidence_edges.evidence_id_hash has a foreign key to
@@ -44,18 +44,12 @@
 //   delete, so that story fails with a clear error instead of silently
 //   dropping review history.
 import { hashCanonical } from "./transparency.js";
+import { newId, contentHash } from "shared";
 
 export const FEDERATION_FETCH_TIMEOUT_MS = 10_000;
 export const FEDERATION_FEED_LIMIT = 100;
 export const FEDERATION_MAX_ATTEMPTS = 5;
 export const FEDERATION_JOB_DEADLINE_MS = 60_000;
-
-function ulidLike(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    Math.random().toString(36).slice(2, 18).toUpperCase()
-  ).slice(0, 26);
-}
 
 type WireBundle = {
   story: Record<string, any>;
@@ -162,7 +156,7 @@ async function ingestBundle(
   } else if (await idIsFree(client, "stories", "story_id", remoteStoryId)) {
     localStoryId = remoteStoryId;
   } else {
-    localStoryId = ulidLike();
+    localStoryId = newId();
   }
 
   const storyVersions: Record<string, any>[] = (story as any).versions ?? [];
@@ -188,7 +182,7 @@ async function ingestBundle(
   for (const v of storyVersions) {
     const localVersionId = (await idIsFree(client, "story_versions", "story_version_id", v.story_version_id))
       ? v.story_version_id
-      : ulidLike();
+      : newId();
     versionIdMap.set(v.story_version_id, localVersionId);
     await client.query(
       `INSERT INTO story_versions (story_version_id, story_id, body_markdown, disclosure_markdown, created_at)
@@ -221,24 +215,31 @@ async function ingestBundle(
   for (const claim of claims) {
     const localClaimId = (await idIsFree(client, "claims", "claim_id", claim.claim_id))
       ? claim.claim_id
-      : ulidLike();
-    claimIdMap.set(claim.claim_id, localClaimId);
+      : newId();
     const localVersionId = versionIdMap.get(claim.story_version_id);
     if (!localVersionId) {
       throw new Error(
         `story ${remoteStoryId}: claim ${claim.claim_id} references unknown version ${claim.story_version_id}`
       );
     }
-    await client.query(
-      `INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, entities, time_window,
+    // Claim identity is stable per version (uq_claims_version_text): a
+    // re-federated bundle reuses the existing claim row for the same
+    // (version, text) instead of failing on the unique constraint. The
+    // claimIdMap must point at the row that actually holds the claim, so a
+    // conflict falls back to selecting it.
+    const textHash = contentHash(String(claim.text ?? ""));
+    const claimIns = await client.query(
+      `INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, text_hash, entities, time_window,
                            jurisdiction, support_status, confidence_model, confidence_review, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
+       ON CONFLICT (story_version_id, text_hash) DO NOTHING RETURNING claim_id`,
       [
         localClaimId,
         localStoryId,
         localVersionId,
         claim.claim_type,
         claim.text,
+        textHash,
         JSON.stringify(claim.entities ?? []),
         JSON.stringify(claim.time_window ?? {}),
         claim.jurisdiction ?? null,
@@ -248,6 +249,15 @@ async function ingestBundle(
         claim.created_at
       ]
     );
+    if (claimIns.rowCount && claimIns.rowCount > 0) {
+      claimIdMap.set(claim.claim_id, claimIns.rows[0].claim_id);
+    } else {
+      const existing = await client.query(
+        `SELECT claim_id FROM claims WHERE story_version_id = $1 AND text_hash = $2`,
+        [localVersionId, textHash]
+      );
+      claimIdMap.set(claim.claim_id, existing.rows[0].claim_id);
+    }
   }
 
   for (const edge of evidence_edges) {
@@ -259,8 +269,9 @@ async function ingestBundle(
     }
     await client.query(
       `INSERT INTO claim_evidence_edges (edge_id, claim_id, evidence_id_hash, relation, strength)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [ulidLike(), localClaimId, edge.evidence_id_hash, edge.relation, Number(edge.strength ?? 0.5)]
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (claim_id, evidence_id_hash, relation) WHERE reviewer_actor_id IS NULL DO NOTHING`,
+      [newId(), localClaimId, edge.evidence_id_hash, edge.relation, Number(edge.strength ?? 0.5)]
     );
   }
 
@@ -278,7 +289,7 @@ async function ingestBundle(
       correction.correction_id
     ))
       ? correction.correction_id
-      : ulidLike();
+      : newId();
     await client.query(
       `INSERT INTO corrections (correction_id, platform_id, claim_id, reason, created_at)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -318,7 +329,7 @@ async function writeAudit(
   await client.query(
     `INSERT INTO audit_log (audit_id, platform_id, action_type, resource_type, resource_id, details, created_at)
      VALUES ($1, $2, $3, 'peer', $4, $5::jsonb, now())`,
-    [ulidLike(), platformId, actionType, peerId, JSON.stringify(details)]
+    [newId(), platformId, actionType, peerId, JSON.stringify(details)]
   );
 }
 

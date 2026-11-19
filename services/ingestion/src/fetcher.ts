@@ -1,5 +1,6 @@
-import crypto from "node:crypto";
 import Parser from "rss-parser";
+
+export { contentHash } from "shared";
 
 const parser = new Parser({
   timeout: 30000,
@@ -72,10 +73,6 @@ export async function fetchFeed(feedUrl: string): Promise<FetchedArticle[]> {
   }
 
   return articles;
-}
-
-export function contentHash(text: string): string {
-  return "sha256:" + crypto.createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 export { isBlockedUrl };

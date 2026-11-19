@@ -7,6 +7,7 @@ import {
   startFederationWorker
 } from "./federation.js";
 import { federationRateLimiter } from "./rateLimit.js";
+import { newId, contentHash } from "shared";
 
 type Story = {
   story_id: string;
@@ -386,7 +387,7 @@ app.post("/v1/transparency/checkpoints", async (req, res) => {
     }));
     const leafHashes = leaves.map((leaf) => merkleLeafHash(leaf));
     const root = merkleRoot(leafHashes);
-    const checkpointId = ulidLike();
+    const checkpointId = newId();
     const eventIds = events.map((event) => event.event_id);
 
     await client.query(
@@ -836,7 +837,7 @@ app.post("/v1/story/:story_id/publish", async (req, res) => {
       VALUES ($1, $2, $3, 'v1', $4::jsonb)
       `,
       [
-        ulidLike(),
+        newId(),
         env.PLATFORM_ID,
         "story.published.v1",
         JSON.stringify({
@@ -1026,10 +1027,6 @@ app.get("/v1/story/:story_id/simulation", async (req, res) => {
   }
 });
 
-function ulidLike(): string {
-  return (Date.now().toString(36).toUpperCase().padStart(10, "0") + Math.random().toString(36).slice(2, 18).toUpperCase()).slice(0, 26);
-}
-
 // ─── WP07: Federation ───────────────────────────────────────────────
 
 // GET /v1/federation/peers — list known peers
@@ -1053,7 +1050,7 @@ app.post("/v1/federation/peers", async (req, res) => {
     return res.status(400).json({ code: "bad_request", message: "peer_url and peer_name are required" });
   }
 
-  const peer_id = ulidLike();
+  const peer_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -1113,7 +1110,7 @@ app.post("/v1/federation/sync", federationRateLimiter, async (req, res) => {
       });
     }
 
-    const jobId = ulidLike();
+    const jobId = newId();
     await pool.query(
       `INSERT INTO federation_sync_jobs (job_id, platform_id, peer_id, state)
        VALUES ($1, $2, $3, 'pending')`,
@@ -1185,7 +1182,7 @@ app.post("/v1/stewardship/transfer", async (req, res) => {
     return res.status(400).json({ code: "bad_request", message: "from_actor_id and to_actor_id are required" });
   }
 
-  const transfer_id = ulidLike();
+  const transfer_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -1198,7 +1195,7 @@ app.post("/v1/stewardship/transfer", async (req, res) => {
     await pool.query(
       `INSERT INTO audit_log (audit_id, platform_id, actor_id, action_type, resource_type, resource_id, details, created_at)
        VALUES ($1, $2, $3, 'stewardship_transfer_initiated', 'platform', $4, $5::jsonb, $6)`,
-      [ulidLike(), env.PLATFORM_ID, from_actor_id, env.PLATFORM_ID, JSON.stringify({ to_actor_id, notes }), now]
+      [newId(), env.PLATFORM_ID, from_actor_id, env.PLATFORM_ID, JSON.stringify({ to_actor_id, notes }), now]
     );
 
     return res.status(201).json({ transfer_id, from_actor_id, to_actor_id, status: "initiated", initiated_at: now });
@@ -1262,7 +1259,7 @@ app.put("/v1/stewardship/transfer/:id/complete", async (req, res) => {
     await pool.query(
       `INSERT INTO audit_log (audit_id, platform_id, actor_id, action_type, resource_type, resource_id, details, created_at)
        VALUES ($1, $2, $3, 'stewardship_transfer_completed', 'platform', $4, $5::jsonb, $6)`,
-      [ulidLike(), env.PLATFORM_ID, transfer.to_actor_id, env.PLATFORM_ID, JSON.stringify({ from: transfer.from_actor_id, to: transfer.to_actor_id }), now]
+      [newId(), env.PLATFORM_ID, transfer.to_actor_id, env.PLATFORM_ID, JSON.stringify({ from: transfer.from_actor_id, to: transfer.to_actor_id }), now]
     );
 
     return res.status(200).json(transfer);
@@ -1345,7 +1342,7 @@ app.put("/v1/platform/config", async (req, res) => {
 
     await pool.query(
       `INSERT INTO audit_log (audit_id, platform_id, action_type, resource_type, resource_id, details, created_at) VALUES ($1, $2, 'platform_config_updated', 'platform', $3, $4::jsonb, $5)`,
-      [ulidLike(), env.PLATFORM_ID, env.PLATFORM_ID, JSON.stringify({ name, config }), now]
+      [newId(), env.PLATFORM_ID, env.PLATFORM_ID, JSON.stringify({ name, config }), now]
     );
 
     return res.status(200).json(q.rows[0]);
@@ -1363,7 +1360,7 @@ app.post("/v1/memberships", async (req, res) => {
     return res.status(400).json({ code: "bad_request", message: "actor_id is required" });
   }
 
-  const member_id = ulidLike();
+  const member_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -1400,7 +1397,7 @@ app.post("/v1/bounties", async (req, res) => {
     return res.status(400).json({ code: "bad_request", message: "amount and created_by are required" });
   }
 
-  const bounty_id = ulidLike();
+  const bounty_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -1423,7 +1420,7 @@ app.post("/v1/bounties/:id/contribute", async (req, res) => {
     return res.status(400).json({ code: "bad_request", message: "actor_id and amount are required" });
   }
 
-  const contribution_id = ulidLike();
+  const contribution_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -1465,7 +1462,7 @@ app.post("/v1/payouts", async (req, res) => {
     return res.status(400).json({ code: "bad_request", message: "recipient_actor_id and amount are required" });
   }
 
-  const payout_id = ulidLike();
+  const payout_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -1477,7 +1474,7 @@ app.post("/v1/payouts", async (req, res) => {
 
     await pool.query(
       `INSERT INTO audit_log (audit_id, platform_id, action_type, resource_type, resource_id, details, created_at) VALUES ($1, $2, 'payout_recorded', 'payout', $3, $4::jsonb, $5)`,
-      [ulidLike(), env.PLATFORM_ID, payout_id, JSON.stringify({ story_id, recipient_actor_id, amount }), now]
+      [newId(), env.PLATFORM_ID, payout_id, JSON.stringify({ story_id, recipient_actor_id, amount }), now]
     );
 
     return res.status(201).json({ payout_id, story_id, recipient_actor_id, amount, created_at: now });
@@ -1525,7 +1522,7 @@ app.post("/v1/corrections", async (req, res) => {
       return res.status(404).json({ code: "not_found", message: "claim not found" });
     }
 
-    const correction_id = ulidLike();
+    const correction_id = newId();
     const now = new Date().toISOString();
 
     await pool.query(
@@ -1539,7 +1536,7 @@ app.post("/v1/corrections", async (req, res) => {
       `INSERT INTO event_outbox (event_id, platform_id, event_type, event_version, payload, created_at)
        VALUES ($1, $2, $3, 'v1', $4::jsonb, $5)`,
       [
-        ulidLike(),
+        newId(),
         env.PLATFORM_ID,
         "correction.created.v1",
         JSON.stringify({ correction_id, claim_id, reason }),
@@ -1704,9 +1701,12 @@ app.post("/v1/archive/import", async (req, res) => {
 
     if (data.claims) {
       for (const row of data.claims) {
+        // text_hash keeps the import idempotent per (version, text) as well
+        // as per claim_id: a bare ON CONFLICT DO NOTHING covers both the
+        // claim_id PK and the uq_claims_version_text unique.
         await client.query(
-          `INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, entities, time_window, jurisdiction, support_status, confidence_model, confidence_review, created_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12) ON CONFLICT (claim_id) DO NOTHING`,
-          [row.claim_id, row.story_id, row.story_version_id, row.claim_type, row.text, JSON.stringify(row.entities ?? []), JSON.stringify(row.time_window ?? {}), row.jurisdiction, row.support_status, row.confidence_model, row.confidence_review, row.created_at]
+          `INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, text_hash, entities, time_window, jurisdiction, support_status, confidence_model, confidence_review, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13) ON CONFLICT DO NOTHING`,
+          [row.claim_id, row.story_id, row.story_version_id, row.claim_type, row.text, contentHash(String(row.text ?? "")), JSON.stringify(row.entities ?? []), JSON.stringify(row.time_window ?? {}), row.jurisdiction, row.support_status, row.confidence_model, row.confidence_review, row.created_at]
         );
       }
       counts.claims = data.claims.length;
@@ -1714,8 +1714,10 @@ app.post("/v1/archive/import", async (req, res) => {
 
     if (data.claim_evidence_edges) {
       for (const row of data.claim_evidence_edges) {
+        // Bare ON CONFLICT: covers both the edge_id PK and the
+        // uq_claim_evidence_edges_identity unique.
         await client.query(
-          `INSERT INTO claim_evidence_edges (edge_id, claim_id, evidence_id_hash, relation, strength, reviewer_actor_id, notes, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (edge_id) DO NOTHING`,
+          `INSERT INTO claim_evidence_edges (edge_id, claim_id, evidence_id_hash, relation, strength, reviewer_actor_id, notes, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`,
           [row.edge_id, row.claim_id, row.evidence_id_hash, row.relation, row.strength, row.reviewer_actor_id, row.notes, row.created_at]
         );
       }

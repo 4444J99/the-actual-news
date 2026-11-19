@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "express": "^5.2.1",
-    "pg": "^8.21.0"
+    "express-rate-limit": "^8.7.5",
+    "pg": "^8.21.0",
+    "shared": "workspace:*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

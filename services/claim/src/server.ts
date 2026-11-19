@@ -1,7 +1,8 @@
 import express from "express";
-import crypto from "node:crypto";
 import { loadEnv, DEFAULT_PORT } from "./env.js";
 import { makePool } from "./db.js";
+import { newId, contentHash } from "shared";
+import { extractRateLimiter } from "./rateLimit.js";
 
 const env = loadEnv();
 const pool = makePool(env.POSTGRES_URI);
@@ -9,13 +10,6 @@ const PORT = Number(process.env.CLAIM_PORT ?? DEFAULT_PORT);
 
 type ClaimType = "factual" | "statistical" | "attribution" | "interpretation";
 type SupportStatus = "unsupported" | "partially_supported" | "supported" | "contradicted";
-
-function ulid(): string {
-  return (
-    Date.now().toString(36).toUpperCase().padStart(10, "0") +
-    crypto.randomBytes(10).toString("hex").toUpperCase()
-  ).slice(0, 26);
-}
 
 function detectClaimType(text: string): ClaimType {
   if (/\d+%|\$[\d,]+|million|billion|\d+\s*(people|cases|deaths)/i.test(text)) {
@@ -42,7 +36,10 @@ app.get("/v1/health", (_req, res) => {
 });
 
 // POST /v1/extract — start claim extraction
-app.post("/v1/extract", async (req, res) => {
+// Rate-limited (see rateLimit.ts): the handler performs repeated DB writes
+// (one claim insert per sentence), and CodeQL js/missing-rate-limiting
+// flags it without a throttle.
+app.post("/v1/extract", extractRateLimiter, async (req, res) => {
   const { platform_id, story_id, story_version_id, body_markdown, model_policy } = req.body ?? {};
 
   if (!story_id || !story_version_id || !body_markdown) {
@@ -53,7 +50,7 @@ app.post("/v1/extract", async (req, res) => {
   }
 
   const pid = platform_id ?? env.PLATFORM_ID;
-  const job_id = ulid();
+  const job_id = newId();
   const now = new Date().toISOString();
 
   try {
@@ -68,27 +65,55 @@ app.post("/v1/extract", async (req, res) => {
     const maxClaims = model_policy?.max_claims ?? 200;
     const extracted = sentences.slice(0, maxClaims);
 
+    // One transaction for the whole extraction: a crash mid-loop must not
+    // leave half the claims, and re-extracting the same body for the same
+    // version reuses the existing claim rows (UNIQUE (story_version_id,
+    // text_hash)) instead of minting duplicates.
+    const client = await pool.connect();
     const claimIds: string[] = [];
-    for (const text of extracted) {
-      const claim_id = ulid();
-      await pool.query(
-        `INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, entities, time_window, jurisdiction, support_status, confidence_model, confidence_review, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, 'unsupported', $9, $10, $11)`,
-        [
-          claim_id,
-          story_id,
-          story_version_id,
-          detectClaimType(text),
-          text,
-          JSON.stringify(extractEntities(text)),
-          JSON.stringify({}),
-          null,
-          null,
-          null,
-          now,
-        ]
-      );
-      claimIds.push(claim_id);
+    try {
+      await client.query("BEGIN");
+      for (const text of extracted) {
+        const textHash = contentHash(text);
+        const ins = await client.query(
+          `INSERT INTO claims (claim_id, story_id, story_version_id, claim_type, text, text_hash, entities, time_window, jurisdiction, support_status, confidence_model, confidence_review, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, 'unsupported', $10, $11, $12)
+           ON CONFLICT (story_version_id, text_hash) DO NOTHING RETURNING claim_id`,
+          [
+            newId(),
+            story_id,
+            story_version_id,
+            detectClaimType(text),
+            text,
+            textHash,
+            JSON.stringify(extractEntities(text)),
+            JSON.stringify({}),
+            null,
+            null,
+            null,
+            now,
+          ]
+        );
+        if (ins.rowCount && ins.rowCount > 0) {
+          claimIds.push(ins.rows[0].claim_id);
+        } else {
+          const existing = await client.query(
+            `SELECT claim_id FROM claims WHERE story_version_id = $1 AND text_hash = $2`,
+            [story_version_id, textHash]
+          );
+          claimIds.push(existing.rows[0].claim_id);
+        }
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Best-effort; the connection may already be dead.
+      }
+      throw err;
+    } finally {
+      client.release();
     }
 
     return res.status(202).json({ job_id, claims_created: claimIds.length, claim_ids: claimIds });

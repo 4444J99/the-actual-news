@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -35,6 +36,11 @@ const FIXTURE_FILES = [
   "CT-09.json",
   "CT-10.json"
 ];
+
+// Ingestion identity fixtures (the-actual-news#111). These have an
+// `ingestion` block instead of a publish-gate `ledger`, so they run through
+// runIngestionFixture below, not runFixture.
+const INGESTION_FIXTURE_FILES = ["CT-11.json", "CT-12.json"];
 
 const BUNDLE_FIXTURE_DIR = path.join(ROOT, "fixtures", "civic-record-node");
 
@@ -330,6 +336,152 @@ async function runFixture(pool, fixturePath) {
   }
 }
 
+async function runIngestionFixture(pool, fixturePath) {
+  // CT-11 / CT-12 (the-actual-news#111): the fixture encodes the post-fix
+  // ingestion state (runs, captures, stories, claims, edges) and `expected`
+  // states the identity invariants; the runner verifies them in SQL.
+  // The LIVE proof that the pipeline produces this state is the vitest
+  // suite services/ingestion/src/__tests__/identity.test.ts, named in each
+  // fixture's `live_proof` field — this check verifies the invariants hold
+  // on the state, it does not re-run the pipeline.
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+  const schema = schemaName();
+
+  const client = await pool.connect();
+  try {
+    await client.query(`CREATE SCHEMA ${schema};`);
+    await execInSchema(client, schema, SCHEMA_SQL);
+
+    const ing = fixture.ingestion;
+    const exp = fixture.expected;
+
+    await insertRows(client, "ingest_runs", ing.runs ?? []);
+    await insertRows(client, "stories", ing.stories ?? []);
+    await insertRows(client, "story_versions", ing.story_versions ?? []);
+    await insertRows(client, "evidence_objects", (ing.evidence_objects ?? []).map((e) => ({
+      extracted_text: null,
+      ...e,
+      provenance: JSON.stringify(e.provenance ?? {})
+    })));
+    await insertRows(client, "claims", (ing.claims ?? []).map((c) => ({
+      jurisdiction: null,
+      confidence_model: null,
+      confidence_review: null,
+      ...c,
+      entities: JSON.stringify(c.entities ?? []),
+      time_window: JSON.stringify(c.time_window ?? {})
+    })));
+    await insertRows(client, "claim_evidence_edges", (ing.edges ?? []).map((e) => ({
+      reviewer_actor_id: e.reviewer_actor_id ?? null,
+      notes: e.notes ?? null,
+      ...e
+    })));
+    await insertRows(client, "source_captures", ing.captures ?? []);
+
+    const one = async (sql) => {
+      const r = await execInSchema(client, schema, sql);
+      return r.rows[0];
+    };
+
+    if (exp.success_captures !== undefined) {
+      const row = await one(`SELECT COUNT(*)::int AS c FROM source_captures WHERE status = 'success'`);
+      assertEq("success_captures", Number(row.c), exp.success_captures);
+    }
+    if (exp.error_captures !== undefined) {
+      const row = await one(`SELECT COUNT(*)::int AS c FROM source_captures WHERE status = 'error'`);
+      assertEq("error_captures", Number(row.c), exp.error_captures);
+    }
+    if (exp.duplicate_identity_groups !== undefined) {
+      const row = await one(`
+        SELECT COUNT(*)::int AS c FROM (
+          SELECT 1 FROM source_captures WHERE status = 'success'
+          GROUP BY source_id, url, content_hash HAVING COUNT(*) > 1
+        ) t`);
+      assertEq("duplicate_identity_groups", Number(row.c), exp.duplicate_identity_groups);
+    }
+    if (exp.blob_uri_mismatches !== undefined) {
+      // A success capture's blob URI must name its content hash:
+      // blob://local/<hex> where <hex> is content_hash minus "sha256:".
+      const row = await one(`
+        SELECT COUNT(*)::int AS c FROM source_captures
+        WHERE status = 'success'
+          AND blob_uri <> 'blob://local/' || substr(content_hash, 8)`);
+      assertEq("blob_uri_mismatches", Number(row.c), exp.blob_uri_mismatches);
+    }
+    if (exp.stories !== undefined) {
+      const row = await one(`SELECT COUNT(*)::int AS c FROM stories`);
+      assertEq("stories", Number(row.c), exp.stories);
+    }
+    if (exp.claims !== undefined) {
+      const row = await one(`SELECT COUNT(*)::int AS c FROM claims`);
+      assertEq("claims", Number(row.c), exp.claims);
+    }
+    if (exp.claims_without_origin_edge !== undefined) {
+      const row = await one(`
+        SELECT COUNT(*)::int AS c FROM claims c WHERE NOT EXISTS (
+          SELECT 1 FROM claim_evidence_edges e
+          WHERE e.claim_id = c.claim_id AND e.relation = 'origin'
+        )`);
+      assertEq("claims_without_origin_edge", Number(row.c), exp.claims_without_origin_edge);
+    }
+    if (exp.partial_rows !== undefined) {
+      const row = await one(`
+        SELECT (
+          (SELECT COUNT(*) FROM stories) +
+          (SELECT COUNT(*) FROM story_versions) +
+          (SELECT COUNT(*) FROM claims) +
+          (SELECT COUNT(*) FROM claim_evidence_edges) +
+          (SELECT COUNT(*) FROM source_captures WHERE status = 'success')
+        )::int AS c`);
+      assertEq("partial_rows", Number(row.c), exp.partial_rows);
+    }
+    if (exp.run_status !== undefined) {
+      const r = await execInSchema(client, schema, `SELECT status FROM ingest_runs`);
+      if (r.rowCount !== 1) throw new Error(`run_status: expected 1 run, got ${r.rowCount}`);
+      assertEq("run_status", String(r.rows[0].status), exp.run_status);
+    }
+    if (exp.completed_at_null !== undefined) {
+      const r = await execInSchema(client, schema, `SELECT completed_at IS NULL AS v FROM ingest_runs`);
+      if (r.rowCount !== 1) throw new Error(`completed_at_null: expected 1 run, got ${r.rowCount}`);
+      assertEq("completed_at_null", Boolean(r.rows[0].v), exp.completed_at_null);
+    }
+    if (exp.failed_at_set !== undefined) {
+      const r = await execInSchema(client, schema, `SELECT failed_at IS NOT NULL AS v FROM ingest_runs`);
+      if (r.rowCount !== 1) throw new Error(`failed_at_set: expected 1 run, got ${r.rowCount}`);
+      assertEq("failed_at_set", Boolean(r.rows[0].v), exp.failed_at_set);
+    }
+    if (exp.runs_finalize_ok !== undefined) {
+      const row = await one(`SELECT COUNT(*)::int AS c FROM ingest_runs WHERE finalize_ok IS DISTINCT FROM true`);
+      assertEq("runs_finalize_ok", Number(row.c), 0);
+    }
+
+    await client.query(`DROP SCHEMA ${schema} CASCADE;`);
+    return { fixture_id: fixture.fixture_id, ok: true };
+  } catch (err) {
+    try { await client.query(`DROP SCHEMA ${schema} CASCADE;`); } catch {}
+    return { fixture_id: fixture.fixture_id, ok: false, error: String(err?.message ?? err) };
+  } finally {
+    client.release();
+  }
+}
+
+function runRestoreDemo() {
+  // CT-13 (the-actual-news#111): the restore demo is a LIVE check, not a
+  // static fixture — tools/restore-demo.mjs ingests, dumps, restores into
+  // a fresh database on a new blob path, re-finalizes, and compares every
+  // identity-bearing row. It exits non-zero on any mismatch.
+  const res = spawnSync("node", [path.join(ROOT, "tools", "restore-demo.mjs")], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: process.env
+  });
+  const out = `${res.stdout ?? ""}${res.stderr ?? ""}`.trim();
+  if (res.status !== 0) {
+    return { fixture_id: "CT-13", ok: false, error: out.split("\n").slice(-5).join(" ") || `exit ${res.status}` };
+  }
+  return { fixture_id: "CT-13", ok: true };
+}
+
 async function runBundleReplayTest(pool) {
   const fixtureId = "CT-BUNDLE-01";
   const bundlePath = path.join(BUNDLE_FIXTURE_DIR, "civic-council-budget-amendment.json");
@@ -479,6 +631,27 @@ async function main() {
     } else {
       console.log(`[OK] ${r.fixture_id}`);
     }
+  }
+
+  // Ingestion identity fixtures (CT-11, CT-12)
+  for (const f of INGESTION_FIXTURE_FILES) {
+    const fp = path.join(FIXTURES_DIR, f);
+    const r = await runIngestionFixture(pool, fp);
+    if (!r.ok) {
+      failed += 1;
+      console.error(`[FAIL] ${r.fixture_id}: ${r.error}`);
+    } else {
+      console.log(`[OK] ${r.fixture_id}`);
+    }
+  }
+
+  // Restore demo (CT-13) — live pg_dump/restore/finalize cycle
+  const restoreResult = runRestoreDemo();
+  if (!restoreResult.ok) {
+    failed += 1;
+    console.error(`[FAIL] ${restoreResult.fixture_id}: ${restoreResult.error}`);
+  } else {
+    console.log(`[OK] ${restoreResult.fixture_id}`);
   }
 
   // Bundle replay conformance test (CT-BUNDLE-01)
