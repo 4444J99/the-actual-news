@@ -2,12 +2,12 @@
 
 Face: public
 
-[![CI](https://github.com/organvm-iii-ergon/the-actual-news/actions/workflows/ci.yml/badge.svg)](https://github.com/organvm-iii-ergon/the-actual-news/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)](https://github.com/organvm-iii-ergon/the-actual-news)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/organvm-iii-ergon/the-actual-news/blob/main/LICENSE)
+[![CI](https://github.com/4444J99/the-actual-news/actions/workflows/ci.yml/badge.svg)](https://github.com/4444J99/the-actual-news/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)](https://github.com/4444J99/the-actual-news)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/4444J99/the-actual-news/blob/main/LICENSE)
 [![Organ III](https://img.shields.io/badge/Organ-III%20Ergon-F59E0B)](https://github.com/organvm-iii-ergon)
-[![Status](https://img.shields.io/badge/status-active-brightgreen)](https://github.com/organvm-iii-ergon/the-actual-news)
-[![TypeScript](https://img.shields.io/badge/lang-TypeScript-informational)](https://github.com/organvm-iii-ergon/the-actual-news)
+[![Status](https://img.shields.io/badge/status-active-brightgreen)](https://github.com/4444J99/the-actual-news)
+[![TypeScript](https://img.shields.io/badge/lang-TypeScript-informational)](https://github.com/4444J99/the-actual-news)
 
 **Verifiable civic record platform — news as a public service.**
 
@@ -424,7 +424,7 @@ the-actual-news/
 
 ```bash
 # Clone the repository
-git clone https://github.com/organvm-iii-ergon/the-actual-news.git
+git clone https://github.com/4444J99/the-actual-news.git
 cd the-actual-news
 
 # Install dependencies across all workspaces
@@ -465,6 +465,32 @@ The feed endpoint (empty initially):
 curl http://localhost:8080/v1/feed?scope=local
 # {"scope":"local","items":[]}
 ```
+
+### Public Activation
+
+Live URL: <https://the-actual-news-public.ivixivi.workers.dev>
+
+> **Current state (2026-11-20): the live URL is dead.** It returns 404 on
+> every route because no worker is deployed there yet. Deployment is gated on
+> a Cloudflare deploy credential (Anthony's provisioning) — see
+> `docs/activation-ledger.md` for the full activation record, including the
+> three open revenue-provider decisions.
+
+Prove the worker locally in one step — build it, preview it, and run the
+public smoke gate against the preview origin:
+
+```bash
+pnpm cloudflare:build
+pnpm cloudflare:preview   # serves the worker at http://127.0.0.1:8787
+PUBLIC_WEB_BASE_URL=http://127.0.0.1:8787 pnpm smoke:public
+# expected: 34/34 checks [OK], ending with
+# "Public web smoke checks passed for http://127.0.0.1:8787"
+```
+
+The local launch gate (`pnpm launch:local`) is the pre-deployment check: 58
+service tests plus the public-app and conversion smokes. After a real deploy,
+prove the live origin with `pnpm cloudflare:smoke` (currently 0/51 — every route 404 — the
+live URL serves nothing) or `pnpm launch:deployed`.
 
 ### Available Make Targets
 
